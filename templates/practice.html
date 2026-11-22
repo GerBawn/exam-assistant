@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{TITLE}}</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --paper: #fffcf7;
+      --ink: #1f1b16;
+      --muted: #6b645b;
+      --line: #e6e0d6;
+      --accent: #2d4a6e;
+      --accent-soft: #e8eef6;
+      --ok: #2c6e4f;
+      --ok-soft: #e6f4ec;
+      --bad: #a33b32;
+      --bad-soft: #f8eaea;
+      --warn: #8a5a12;
+      --shadow: 0 1px 2px rgba(31, 27, 22, .06), 0 8px 24px rgba(31, 27, 22, .05);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+    body {
+      font: 16px/1.65 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+    }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app { max-width: 920px; margin: 0 auto; padding: 24px 20px 120px; }
+    header.top {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; margin-bottom: 20px;
+    }
+    .title h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: .02em; }
+    .title .meta { color: var(--muted); font-size: 13px; }
+    .hud { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .chip {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; color: var(--muted); box-shadow: var(--shadow);
+    }
+    .chip strong { color: var(--ink); font-weight: 600; }
+    .chip.warn { color: var(--warn); }
+    .chip.ok { color: var(--ok); }
+    .chip.bad { color: var(--bad); }
+    .save-msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
+    .layout { display: grid; grid-template-columns: 72px 1fr; gap: 16px; }
+    @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } .nav { display: flex; flex-wrap: wrap; } }
+    .nav { display: flex; flex-direction: column; gap: 6px; }
+    .nav button {
+      width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--paper); color: var(--ink);
+    }
+    .nav button.current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+    .nav button.answered { box-shadow: inset 0 -3px 0 var(--accent); }
+    .nav button.flagged::after { content: ""; display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin: 2px auto 0; }
+    .nav button.ok { background: var(--ok-soft); border-color: #c8e4d3; }
+    .nav button.bad { background: var(--bad-soft); border-color: #efcfcb; }
+    .card {
+      background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 22px 24px;
+    }
+    .material { margin-bottom: 14px; color: #3a342c; }
+    .material h2, .q h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+    .q-stem { font-size: 17px; line-height: 1.75; margin: 0 0 16px; }
+    .hint { color: var(--muted); font-size: 13px; margin: -8px 0 12px; }
+    .opts { display: grid; gap: 8px; }
+    .opt {
+      display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start;
+      text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 12px;
+      padding: 12px 14px; color: inherit;
+    }
+    .opt:hover { border-color: #c9d6e6; }
+    .opt .key {
+      width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+      background: var(--accent-soft); color: var(--accent); font-weight: 650; font-size: 13px;
+    }
+    .opt.selected { border-color: var(--accent); background: var(--accent-soft); }
+    .opt.correct { border-color: var(--ok); background: var(--ok-soft); }
+    .opt.correct .key { background: var(--ok); color: #fff; }
+    .opt.wrong { border-color: var(--bad); background: var(--bad-soft); }
+    .opt.wrong .key { background: var(--bad); color: #fff; }
+    .opt:disabled { cursor: default; }
+    textarea.essay, input.fill-box, input.fill-inline {
+      border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; background: #fff; color: inherit;
+    }
+    textarea.essay { width: 100%; min-height: 220px; resize: vertical; }
+    .fill-list { display: grid; gap: 10px; }
+    .fill-row { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; }
+    .fill-row .idx { color: var(--muted); font-size: 13px; }
+    input.fill-box { width: 100%; border-radius: 10px; padding: 10px 12px; }
+    input.fill-inline {
+      display: inline-block; width: 10em; margin: 0 4px; padding: 4px 8px;
+      border-radius: 8px; vertical-align: baseline;
+    }
+    input.fill-box:disabled, input.fill-inline:disabled, textarea.essay:disabled { background: #f7f4ef; }
+    .order-list { display: grid; gap: 8px; }
+    .order-item {
+      display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+      border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 10px 12px;
+    }
+    .order-item.correct { border-color: var(--ok); background: var(--ok-soft); }
+    .order-item.wrong { border-color: var(--bad); background: var(--bad-soft); }
+    .order-btns { display: flex; gap: 6px; }
+    .order-btns button {
+      border: 1px solid var(--line); background: var(--paper); border-radius: 8px;
+      padding: 4px 8px; color: var(--ink);
+    }
+    .order-btns button:disabled { opacity: .45; cursor: default; }
+    .analysis, .scoring { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--line); }
+    .analysis.show, .scoring.show { display: block; }
+    .analysis h3, .scoring h3 { margin: 0 0 8px; font-size: 14px; }
+    .source { display: none; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .source.show { display: block; }
+    .dock {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: rgba(246,243,238,.92); backdrop-filter: blur(10px);
+      border-top: 1px solid var(--line); padding: 12px 20px;
+    }
+    .dock-inner { max-width: 920px; margin: 0 auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      border: 1px solid var(--line); background: var(--paper); border-radius: 10px;
+      padding: 8px 14px; color: var(--ink);
+    }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.ghost { background: transparent; }
+    .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .stat { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .stat .n { font-size: 24px; font-weight: 650; }
+    .stat .l { font-size: 12px; color: var(--muted); }
+    .hidden { display: none !important; }
+    html.embedded, html.embedded body { background: var(--bg); }
+    html.embedded .app { max-width: none; padding: 8px 4px 108px; }
+    html.embedded header.top { margin-bottom: 12px; align-items: center; justify-content: flex-start; }
+    html.embedded header.top .title { display: none; }
+    html.embedded #api-status,
+    html.embedded #copy,
+    html.embedded #save { display: none !important; }
+    html.embedded .dock { left: 0; right: 0; }
+    html.embedded .dock-inner { max-width: none; padding: 0 8px; }
+  </style>
+  <script>if (window.self !== window.top) document.documentElement.classList.add("embedded");</script>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="title">
+        <h1 id="title">练习</h1>
+        <div class="meta" id="meta"></div>
+      </div>
+      <div class="hud">
+        <div class="chip" id="progress">0 / 0</div>
+        <div class="chip" id="timer">--:--</div>
+        <div class="chip" id="api-status">记录服务检测中</div>
+      </div>
+    </header>
+    <section id="report" class="hidden"></section>
+    <div class="layout" id="exam-wrap">
+      <nav class="nav" id="nav"></nav>
+      <main>
+        <article class="card material hidden" id="material"></article>
+        <article class="card q" id="question"></article>
+      </main>
+    </div>
+  </div>
+  <div class="dock">
+    <div class="dock-inner">
+      <div class="actions">
+        <button class="btn" id="prev" type="button">上一题</button>
+        <button class="btn" id="next" type="button">下一题</button>
+        <button class="btn ghost" id="flag" type="button">标记</button>
+      </div>
+      <div class="actions">
+        <span class="save-msg" id="save-msg"></span>
+        <button class="btn" id="copy" type="button">复制作答记录</button>
+        <button class="btn" id="save" type="button">手动保存</button>
+        <button class="btn primary" id="submit" type="button">交卷</button>
+      </div>
+    </div>
+  </div>
+  <!-- Replace the window.EXAM_SESSION object with this paper's payload. Do not leave demo data. -->
+  <script>
+    window.EXAM_SESSION = window.EXAM_SESSION || {
+      id: "demo",
+      title: "练习",
+      mode: "practice",
+      source: "",
+      durationMinutes: 0,
+      allowReviewBeforeSubmit: false,
+      materials: [],
+      questions: []
+    };
+  </script>
+  <script>
+    const session = window.EXAM_SESSION;
+    const qs = session.questions || [];
+    const materials = Object.fromEntries((session.materials || []).map(m => [m.id, m]));
+    if (!session.durationMinutes && qs.length) session.durationMinutes = qs.length * 2;
+    const state = {
+      i: 0,
+      answers: {},
+      flags: {},
+      startedAt: Date.now(),
+      usedSeconds: 0,
+      ticking: true,
+      submitted: session.submitted === true
+    };
+
+    const $ = id => document.getElementById(id);
+    const API = window.EXAM_API || "http://127.0.0.1:17922";
+    const DRAFT_KEY = "exam-assistant-draft-" + String(session.id || "practice");
+
+    function letter(i) { return String.fromCharCode(65 + i); }
+    function pad(n) { return String(n).padStart(2, "0"); }
+    function fmt(sec) {
+      sec = Math.max(0, sec | 0);
+      return `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}`;
+    }
+    function kindOf(q) {
+      if (q && q.kind) return q.kind;
+      if (q && q.options && q.options.length) return "choice";
+      return "essay";
+    }
+    function isObjective(kind) {
+      return kind === "choice" || kind === "multi" || kind === "order" || kind === "fill";
+    }
+    function optionText(opt) {
+      return String(opt == null ? "" : opt).replace(/^[A-ZＡ-Ｚ][\.、．]\s*/, "");
+    }
+    function splitLetters(value) {
+      if (Array.isArray(value)) return value.map(v => String(v || "").trim().toUpperCase()).filter(Boolean);
+      return String(value || "").split(/[,，、\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    }
+    function asFillList(value) {
+      if (Array.isArray(value)) return value.map(v => String(v == null ? "" : v));
+      if (value && typeof value === "object") return Object.keys(value).sort().map(k => String(value[k] == null ? "" : value[k]));
+      const raw = String(value == null ? "" : value);
+      if (!raw) return [];
+      if (raw.includes(" | ")) return raw.split(" | ");
+      return [raw];
+    }
+    function hasAnswer(value) {
+      if (value == null) return false;
+      if (Array.isArray(value)) return value.some(v => String(v || "").trim());
+      return String(value).trim().length > 0;
+    }
+    function splitFillStem(stem) {
+      const parts = [];
+      const re = /(\{\{(\d+)\}\}|_{3,})/g;
+      let last = 0, m, i = 0;
+      while ((m = re.exec(stem || ""))) {
+        if (m.index > last) parts.push({ type: "text", value: (stem || "").slice(last, m.index) });
+        parts.push({ type: "blank", index: m[2] ? Number(m[2]) - 1 : i });
+        i += 1;
+        last = m.index + m[0].length;
+      }
+      if (last < String(stem || "").length) parts.push({ type: "text", value: (stem || "").slice(last) });
+      return { parts, blankCount: i };
+    }
+    function expectedFill(q) {
+      if (Array.isArray(q.answer)) return q.answer.map(v => String(v == null ? "" : v));
+      if (q.answer == null) return [];
+      return [String(q.answer)];
+    }
+    function grade(q, userAnswer) {
+      const kind = kindOf(q);
+      if (!isObjective(kind) || q.answer == null || q.answer === "") return null;
+      if (kind === "choice") {
+        return String(userAnswer || "").trim().toUpperCase() === String(q.answer).trim().toUpperCase();
+      }
+      if (kind === "multi") {
+        const a = splitLetters(userAnswer).sort().join(",");
+        const b = splitLetters(q.answer).sort().join(",");
+        return a === b && a.length > 0;
+      }
+      if (kind === "order") {
+        return splitLetters(userAnswer).join(",") === splitLetters(q.answer).join(",");
+      }
+      if (kind === "fill") {
+        const expected = expectedFill(q);
+        const blanks = splitFillStem(q.stem).blankCount;
+        const user = asFillList(userAnswer);
+        if (blanks <= 1 && expected.length > 1 && user.length <= 1) {
+          const got = String(user[0] || "").trim().toLowerCase();
+          return expected.some(v => String(v).trim().toLowerCase() === got);
+        }
+        if (!expected.length) return null;
+        if (user.length !== expected.length) return false;
+        return expected.every((v, i) => String(v).trim().toLowerCase() === String(user[i] || "").trim().toLowerCase());
+      }
+      return null;
+    }
+    function answeredCount() {
+      return qs.filter(q => hasAnswer(state.answers[q.id])).length;
+    }
+    function remaining() {
+      if (!session.durationMinutes) return null;
+      return session.durationMinutes * 60 - Math.floor((Date.now() - state.startedAt) / 1000);
+    }
+    function modeLabel() {
+      if (session.mode === "review") return "复盘练习";
+      if (session.mode === "history") return "历史练习";
+      if (session.mode === "material") return "材料练习";
+      return "练习";
+    }
+    function headerMeta() {
+      const bits = [modeLabel()];
+      if (state.submitted && session.source) bits.push(session.source);
+      if (session.durationMinutes) bits.push("限时 " + session.durationMinutes + " 分钟");
+      return bits.filter(Boolean).join(" · ");
+    }
+    function correctKeys(q) {
+      const kind = kindOf(q);
+      if (kind === "choice") return [String(q.answer || "").trim().toUpperCase()].filter(Boolean);
+      if (kind === "multi") return splitLetters(q.answer);
+      return [];
+    }
+
+    function renderNav() {
+      $("nav").innerHTML = qs.map((q, i) => {
+        const ans = state.answers[q.id];
+        const result = state.submitted && isObjective(kindOf(q)) && q.answer != null && q.answer !== ""
+          ? grade(q, ans)
+          : null;
+        const cls = [
+          i === state.i ? "current" : "",
+          hasAnswer(ans) ? "answered" : "",
+          state.flags[q.id] ? "flagged" : "",
+          result === true ? "ok" : "",
+          result === false ? "bad" : ""
+        ].join(" ");
+        return `<button type="button" class="${cls}" data-i="${i}">${i + 1}</button>`;
+      }).join("");
+      $("progress").innerHTML = `<strong>${answeredCount()}</strong> / ${qs.length}`;
+    }
+
+    function currentOrder(q) {
+      const existing = splitLetters(state.answers[q.id]);
+      if (existing.length) return existing;
+      return (q.options || []).map((_, i) => letter(i));
+    }
+
+    function renderChoice(q, selected, multi) {
+      const selectedKeys = multi ? splitLetters(selected) : [String(selected || "").trim().toUpperCase()];
+      const keys = state.submitted ? correctKeys(q) : [];
+      return `<p class="hint">${multi ? "本题为多选，可点选多个选项。" : ""}</p>
+        <div class="opts">${(q.options || []).map((opt, i) => {
+          const key = letter(i);
+          const cls = ["opt"];
+          if (multi) cls.push("multi");
+          if (selectedKeys.includes(key)) cls.push("selected");
+          if (state.submitted && q.answer != null && q.answer !== "") {
+            if (keys.includes(key)) cls.push("correct");
+            else if (selectedKeys.includes(key)) cls.push("wrong");
+          }
+          return `<button type="button" class="${cls.join(" ")}" data-kind="${multi ? "multi" : "choice"}" data-key="${key}" ${state.submitted ? "disabled" : ""}><span class="key">${key}</span><span>${optionText(opt)}</span></button>`;
+        }).join("")}</div>`;
+    }
+
+    function renderOrder(q) {
+      const order = currentOrder(q);
+      const expected = state.submitted ? splitLetters(q.answer) : [];
+      return `<p class="hint">用上下按钮调整顺序，排好后不必再点确认。</p>
+        <div class="order-list">${order.map((key, i) => {
+          const idx = key.charCodeAt(0) - 65;
+          const text = optionText((q.options || [])[idx] || key);
+          const cls = ["order-item"];
+          if (state.submitted && expected.length) cls.push(expected[i] === key ? "correct" : "wrong");
+          return `<div class="${cls.join(" ")}" data-key="${key}">
+            <span class="key" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-weight:650;font-size:13px;">${i + 1}</span>
+            <span>${key}. ${text}</span>
+            <div class="order-btns">
+              <button type="button" data-order="up" data-index="${i}" ${state.submitted || i === 0 ? "disabled" : ""}>上移</button>
+              <button type="button" data-order="down" data-index="${i}" ${state.submitted || i === order.length - 1 ? "disabled" : ""}>下移</button>
+            </div>
+          </div>`;
+        }).join("")}</div>`;
+    }
+
+    function renderFill(q, selected) {
+      const parsed = splitFillStem(q.stem);
+      const values = asFillList(selected);
+      if (parsed.blankCount > 0) {
+        const html = parsed.parts.map(part => {
+          if (part.type === "text") return part.value;
+          const val = escapeAttr(values[part.index] || "");
+          return `<input class="fill-inline" data-blank="${part.index}" ${state.submitted ? "disabled" : ""} value="${val}" />`;
+        }).join("");
+        return `<p class="q-stem">${html}</p>`;
+      }
+      const n = Math.max(expectedFill(q).length, 1);
+      if (n === 1) {
+        return `<p class="q-stem">${q.stem || ""}</p><input class="fill-box" data-blank="0" ${state.submitted ? "disabled" : ""} value="${escapeAttr(values[0] || "")}" placeholder="在这里填写" />`;
+      }
+      return `<p class="q-stem">${q.stem || ""}</p><div class="fill-list">${Array.from({ length: n }, (_, i) =>
+        `<div class="fill-row"><span class="idx">${i + 1}</span><input class="fill-box" data-blank="${i}" ${state.submitted ? "disabled" : ""} value="${escapeAttr(values[i] || "")}" /></div>`
+      ).join("")}</div>`;
+    }
+
+    function escapeAttr(text) {
+      return String(text)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function render() {
+      const q = qs[state.i];
+      if (!q) return;
+      const mat = q.materialId ? materials[q.materialId] : null;
+      const materialEl = $("material");
+      if (mat) {
+        materialEl.classList.remove("hidden");
+        materialEl.innerHTML = `<h2>${mat.title || "材料"}</h2><div>${mat.html || mat.text || ""}</div>`;
+      } else {
+        materialEl.classList.add("hidden");
+        materialEl.innerHTML = "";
+      }
+
+      const selected = state.answers[q.id];
+      const kind = kindOf(q);
+      const heading = `第 ${state.i + 1} 题${q.topic ? " · " + q.topic : ""}${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`;
+      let body = `<h2>${heading}</h2>`;
+      if (kind === "fill" && splitFillStem(q.stem).blankCount > 0) {
+        body += renderFill(q, selected);
+      } else {
+        body += `<p class="q-stem">${q.stem || ""}</p>`;
+        if (kind === "essay") {
+          body += `<textarea class="essay" ${state.submitted ? "disabled" : ""} placeholder="在这里作答">${selected || ""}</textarea>`;
+        } else if (kind === "multi") {
+          body += renderChoice(q, selected, true);
+        } else if (kind === "order") {
+          body += renderOrder(q);
+        } else if (kind === "fill") {
+          body += renderFill(q, selected).replace(`<p class="q-stem">${q.stem || ""}</p>`, "");
+        } else {
+          body += renderChoice(q, selected, false);
+        }
+      }
+
+      const showReview = state.submitted || session.allowReviewBeforeSubmit;
+      const scoring = (kind === "essay" && (q.scoring || q.analysis))
+        ? `<div class="scoring ${showReview ? "show" : ""}"><h3>评分要点</h3><div>${q.scoring || q.analysis}</div></div>`
+        : "";
+      const analysis = (kind !== "essay" && q.analysis)
+        ? `<div class="analysis ${showReview ? "show" : ""}"><h3>解析</h3><div>${q.analysis}</div></div>`
+        : "";
+      const resultLine = state.submitted && isObjective(kind) && q.answer != null && q.answer !== ""
+        ? `<div class="source show">${grade(q, selected) ? "回答正确" : "回答不正确"} · 参考答案：${formatAnswer(q)}</div>`
+        : (state.submitted && q.source ? `<div class="source show">来源：${q.source}</div>` : "");
+      const source = (state.submitted && q.source && isObjective(kind))
+        ? `<div class="source show">来源：${q.source}</div>`
+        : "";
+      $("question").innerHTML = body + scoring + analysis + resultLine + (resultLine.includes("来源") ? "" : source);
+      $("title").textContent = session.title || "练习";
+      $("meta").textContent = headerMeta();
+      document.title = $("title").textContent || "练习";
+      $("flag").textContent = state.flags[q.id] ? "取消标记" : "标记";
+      $("submit").classList.toggle("hidden", state.submitted);
+      renderNav();
+    }
+
+    function kindLabel(kind) {
+      return ({
+        choice: "单选",
+        multi: "多选",
+        order: "排序",
+        fill: "填空",
+        essay: "简答"
+      })[kind] || "";
+    }
+
+    function formatAnswer(q) {
+      const kind = kindOf(q);
+      if (kind === "fill") return expectedFill(q).join(" / ");
+      if (Array.isArray(q.answer)) return q.answer.join("、");
+      return String(q.answer || "");
+    }
+
+    function record() {
+      const items = qs.map(q => {
+        const userAnswer = state.answers[q.id];
+        const kind = kindOf(q);
+        const correct = grade(q, userAnswer);
+        return {
+          id: q.id,
+          topic: q.topic || "",
+          kind,
+          stem: q.stem || "",
+          options: q.options || [],
+          analysis: q.analysis || "",
+          scoring: q.scoring || "",
+          source: q.source || session.source || "",
+          userAnswer: userAnswer == null ? "" : userAnswer,
+          correctAnswer: q.answer == null ? "" : q.answer,
+          correct,
+          flagged: !!state.flags[q.id]
+        };
+      });
+      const scored = items.filter(x => x.correct !== null);
+      const right = scored.filter(x => x.correct).length;
+      const by = (key) => {
+        const map = {};
+        scored.forEach(it => {
+          const k = it[key] || "未分类";
+          map[k] = map[k] || { total: 0, correct: 0 };
+          map[k].total += 1;
+          if (it.correct) map[k].correct += 1;
+        });
+        return map;
+      };
+      return {
+        savedAt: new Date().toISOString(),
+        startedAt: new Date(state.startedAt).toISOString(),
+        submitted: !!state.submitted,
+        sessionId: session.id,
+        title: session.title,
+        mode: session.mode,
+        source: session.source || "",
+        page: session.page || "",
+        durationMinutes: session.durationMinutes || 0,
+        durationSeconds: (session.durationMinutes || 0) * 60,
+        usedSeconds: state.usedSeconds,
+        items,
+        summary: {
+          total: qs.length,
+          scored: scored.length,
+          correct: right,
+          unanswered: items.filter(x => !hasAnswer(x.userAnswer)).length,
+          accuracy: scored.length ? Math.round(right / scored.length * 1000) / 1000 : null,
+          byTopic: by("topic"),
+          byKind: by("kind")
+        }
+      };
+    }
+
+    function renderReport() {
+      const rec = record();
+      const s = rec.summary;
+      const acc = s.accuracy == null ? "--" : Math.round(s.accuracy * 100) + "%";
+      const rows = Object.entries(s.byKind).map(([k, v]) =>
+        `<div class="stat"><div class="n">${v.correct}/${v.total}</div><div class="l">${kindLabel(k) || k}</div></div>`
+      ).join("");
+      $("report").classList.remove("hidden");
+      $("report").innerHTML = `
+        <div class="score">
+          <div class="stat"><div class="n">${acc}</div><div class="l">客观题正确率</div></div>
+          <div class="stat"><div class="n">${s.correct}/${s.scored || s.total}</div><div class="l">客观题答对</div></div>
+          <div class="stat"><div class="n">${fmt(rec.usedSeconds)}</div><div class="l">用时</div></div>
+        </div>
+        <div class="score">${rows}</div>
+        <p class="meta" style="margin:0 0 12px;">主观题由助手批改。完成后回到对话里告诉我已经交卷。</p>`;
+    }
+
+    let apiOk = false;
+    let apiChecked = false;
+    let draftTimer = null;
+    let booted = false;
+
+    function fileName() {
+      const sid = String(session.id || "practice").replace(/[^\w\-]+/g, "");
+      return `exam-session-${sid}.json`;
+    }
+    function setSaveMsg(text, ok) {
+      const el = $("save-msg");
+      el.textContent = text || "";
+      el.style.color = ok === true ? "var(--ok)" : (ok === false ? "var(--bad)" : "var(--muted)");
+    }
+    function isEmbedded() {
+      return document.documentElement.classList.contains("embedded");
+    }
+    function updateActionButtons() {
+      const hideFallback = !apiChecked || apiOk;
+      $("save").classList.toggle("hidden", hideFallback);
+      $("copy").classList.toggle("hidden", isEmbedded() || hideFallback);
+    }
+    function updateApiChip() {
+      const el = $("api-status");
+      if (apiOk) {
+        el.textContent = "记录服务已连接";
+        el.classList.remove("bad");
+        el.classList.add("ok");
+      } else {
+        el.textContent = "记录服务未开";
+        el.classList.remove("ok");
+        el.classList.add("bad");
+      }
+      updateActionButtons();
+    }
+    async function pingApi() {
+      try {
+        const r = await fetch(API + "/api/health", { cache: "no-store" });
+        apiOk = r.ok;
+      } catch (err) {
+        apiOk = false;
+      }
+      apiChecked = true;
+      updateApiChip();
+      return apiOk;
+    }
+    function recordTime(rec) {
+      return rec && rec.savedAt ? Date.parse(rec.savedAt) || 0 : 0;
+    }
+    function recordIsSubmitted(rec) {
+      if (!rec) return false;
+      if (rec.submitted === false) return false;
+      if (rec.submitted === true) return true;
+      return false;
+    }
+    function readLocalDraft() {
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+    function writeLocalDraft(rec) {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(rec || record()));
+      } catch (err) {}
+    }
+    function applyRecord(rec) {
+      if (!rec) return;
+      if (rec.startedAt) {
+        const t = Date.parse(rec.startedAt);
+        if (!Number.isNaN(t)) state.startedAt = t;
+      }
+      if (typeof rec.usedSeconds === "number") state.usedSeconds = rec.usedSeconds;
+      const items = Array.isArray(rec.items) ? rec.items : [];
+      if (items.length) {
+        items.forEach(it => {
+          if (!it || !it.id) return;
+          if (hasAnswer(it.userAnswer)) state.answers[it.id] = it.userAnswer;
+          if (it.flagged) state.flags[it.id] = true;
+        });
+      } else {
+        if (rec.answers && typeof rec.answers === "object") Object.assign(state.answers, rec.answers);
+        if (rec.flags && typeof rec.flags === "object") Object.assign(state.flags, rec.flags);
+      }
+      if (recordIsSubmitted(rec)) {
+        state.submitted = true;
+        state.ticking = false;
+      }
+    }
+    function pickRestore(server, local) {
+      if (server && recordIsSubmitted(server)) return server;
+      if (local && recordIsSubmitted(local) && !server) return local;
+      if (server && local) return recordTime(server) >= recordTime(local) ? server : local;
+      return server || local || null;
+    }
+    async function fetchSession() {
+      if (!session.id) return null;
+      try {
+        const r = await fetch(API + "/api/sessions/" + encodeURIComponent(session.id), { cache: "no-store" });
+        if (r.status === 404) return null;
+        if (!r.ok) return null;
+        const data = await r.json();
+        return data && data.ok ? (data.session || data.record || data.data) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+    function downloadRecord() {
+      const rec = record();
+      const blob = new Blob([JSON.stringify(rec, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName();
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+    async function saveToServer(rec) {
+      const r = await fetch(API + "/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rec || record())
+      });
+      if (!r.ok) throw new Error("bad status");
+      return r.json();
+    }
+    async function pushDraft() {
+      if (state.submitted) return;
+      const rec = record();
+      rec.submitted = false;
+      writeLocalDraft(rec);
+      if (!apiOk) return;
+      try {
+        await saveToServer(rec);
+        setSaveMsg("已自动保存草稿", true);
+      } catch (err) {
+        setSaveMsg("草稿已保存在本机浏览器，记录服务稍后再试", false);
+      }
+    }
+    function scheduleDraftSave() {
+      if (!booted || state.submitted) return;
+      writeLocalDraft();
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(pushDraft, 600);
+    }
+    async function autoSave() {
+      const rec = record();
+      writeLocalDraft(rec);
+      try {
+        if (await pingApi()) {
+          const res = await saveToServer(rec);
+          const file = (res && res.file) || "sessions/";
+          setSaveMsg("已自动保存到本机记录（" + file + "）", true);
+          return true;
+        }
+      } catch (err) {}
+      downloadRecord();
+      setSaveMsg("记录服务未开，已下载作答文件，请放到 /Users/songyanfei/.exam-assistant/sessions/", false);
+      return false;
+    }
+    async function saveFile() {
+      if (await pingApi()) {
+        try {
+          const rec = record();
+          writeLocalDraft(rec);
+          const res = await saveToServer(rec);
+          setSaveMsg("已保存到本机记录（" + ((res && res.file) || "sessions/") + "）", true);
+          return;
+        } catch (err) {}
+      }
+      writeLocalDraft();
+      downloadRecord();
+      setSaveMsg("已下载作答记录，请放到 /Users/songyanfei/.exam-assistant/sessions/", false);
+    }
+    function copyRecord() {
+      const rec = record();
+      navigator.clipboard.writeText(JSON.stringify(rec, null, 2)).then(() => {
+        $("copy").textContent = "已复制";
+        setTimeout(() => $("copy").textContent = "复制作答记录", 1500);
+      });
+    }
+    async function submit() {
+      if (state.submitted) return;
+      state.submitted = true;
+      state.ticking = false;
+      state.usedSeconds = Math.floor((Date.now() - state.startedAt) / 1000);
+      clearTimeout(draftTimer);
+      renderReport();
+      render();
+      await autoSave();
+    }
+
+    function setFillAnswer(q, index, value) {
+      const parsed = splitFillStem(q.stem);
+      const n = parsed.blankCount || Math.max(expectedFill(q).length, 1);
+      const list = asFillList(state.answers[q.id]);
+      while (list.length < n) list.push("");
+      list[index] = value;
+      state.answers[q.id] = n === 1 ? list[0] : list;
+    }
+
+    $("nav").addEventListener("click", e => {
+      const btn = e.target.closest("button[data-i]");
+      if (btn) { state.i = Number(btn.dataset.i); render(); }
+    });
+    $("prev").addEventListener("click", () => { if (state.i > 0) { state.i -= 1; render(); } });
+    $("next").addEventListener("click", () => { if (state.i < qs.length - 1) { state.i += 1; render(); } });
+    $("flag").addEventListener("click", () => {
+      const id = qs[state.i].id;
+      state.flags[id] = !state.flags[id];
+      render();
+      scheduleDraftSave();
+    });
+    $("question").addEventListener("click", e => {
+      if (state.submitted) return;
+      const q = qs[state.i];
+      const orderBtn = e.target.closest("[data-order]");
+      if (orderBtn) {
+        const order = currentOrder(q);
+        const i = Number(orderBtn.dataset.index);
+        const j = orderBtn.dataset.order === "up" ? i - 1 : i + 1;
+        if (j < 0 || j >= order.length) return;
+        const tmp = order[i];
+        order[i] = order[j];
+        order[j] = tmp;
+        state.answers[q.id] = order.join(",");
+        render();
+        scheduleDraftSave();
+        return;
+      }
+      const btn = e.target.closest(".opt");
+      if (!btn) return;
+      if (btn.dataset.kind === "multi") {
+        const keys = splitLetters(state.answers[q.id]);
+        const key = btn.dataset.key;
+        const at = keys.indexOf(key);
+        if (at >= 0) keys.splice(at, 1);
+        else keys.push(key);
+        keys.sort();
+        state.answers[q.id] = keys.join(",");
+      } else {
+        state.answers[q.id] = btn.dataset.key;
+      }
+      render();
+      scheduleDraftSave();
+    });
+    $("question").addEventListener("input", e => {
+      if (state.submitted) return;
+      const q = qs[state.i];
+      if (e.target.classList.contains("essay")) {
+        state.answers[q.id] = e.target.value;
+        scheduleDraftSave();
+      } else if (e.target.classList.contains("fill-box") || e.target.classList.contains("fill-inline")) {
+        setFillAnswer(q, Number(e.target.dataset.blank || 0), e.target.value);
+        scheduleDraftSave();
+      }
+    });
+    $("submit").addEventListener("click", submit);
+    $("save").addEventListener("click", saveFile);
+    $("copy").addEventListener("click", copyRecord);
+
+    document.addEventListener("keydown", e => {
+      if (e.target.matches("textarea, input")) return;
+      if (state.submitted) {
+        if (e.key === "ArrowLeft") $("prev").click();
+        else if (e.key === "ArrowRight") $("next").click();
+        return;
+      }
+      const q = qs[state.i];
+      const kind = q ? kindOf(q) : "";
+      if (/^[1-9a-dA-D]$/.test(e.key) && q && (kind === "choice" || kind === "multi") && q.options) {
+        const i = "123456789".includes(e.key) ? Number(e.key) - 1 : "abcdABCD".indexOf(e.key) % 4;
+        if (i >= 0 && q.options[i]) {
+          if (kind === "multi") {
+            const keys = splitLetters(state.answers[q.id]);
+            const key = letter(i);
+            const at = keys.indexOf(key);
+            if (at >= 0) keys.splice(at, 1);
+            else keys.push(key);
+            keys.sort();
+            state.answers[q.id] = keys.join(",");
+          } else {
+            state.answers[q.id] = letter(i);
+          }
+          render();
+          scheduleDraftSave();
+        }
+      } else if (e.key === "ArrowLeft") $("prev").click();
+      else if (e.key === "ArrowRight") $("next").click();
+    });
+
+    setInterval(() => {
+      if (!state.ticking) {
+        $("timer").textContent = fmt(state.usedSeconds);
+        return;
+      }
+      state.usedSeconds = Math.floor((Date.now() - state.startedAt) / 1000);
+      const left = remaining();
+      const el = $("timer");
+      if (left == null) el.textContent = fmt(state.usedSeconds);
+      else {
+        el.textContent = fmt(left);
+        el.classList.toggle("warn", left <= 60);
+        if (left <= 0 && !state.submitted) submit();
+      }
+    }, 250);
+
+    async function boot() {
+      updateActionButtons();
+      const online = await pingApi();
+      const server = online ? await fetchSession() : null;
+      const local = readLocalDraft();
+      applyRecord(pickRestore(server, local));
+      booted = true;
+      if (state.submitted) renderReport();
+      if (!qs.length) {
+        $("question").innerHTML = "<p>这一份练习还没有题目。</p>";
+      } else {
+        render();
+      }
+    }
+
+    setInterval(pingApi, 5000);
+    boot().catch(() => {
+      booted = true;
+      if (!qs.length) $("question").innerHTML = "<p>这一份练习还没有题目。</p>";
+      else render();
+    });
+  </script>
+</body>
+</html>

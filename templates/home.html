@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>考试助手</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --paper: #fffcf7;
+      --ink: #1f1b16;
+      --muted: #6b645b;
+      --line: #e6e0d6;
+      --accent: #2d4a6e;
+      --accent-soft: #e8eef6;
+      --ok: #2c6e4f;
+      --ok-soft: #e6f4ec;
+      --bad: #a33b32;
+      --bad-soft: #f8eaea;
+      --mid: #8a5a12;
+      --mid-soft: #f6eedf;
+      --shadow: 0 1px 2px rgba(31, 27, 22, .06), 0 8px 24px rgba(31, 27, 22, .05);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+    body { font: 16px/1.65 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .app { max-width: 980px; margin: 0 auto; padding: 28px 20px 64px; }
+    h1 { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
+    h2 { margin: 0 0 12px; font-size: 16px; font-weight: 650; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 18px; }
+    .tabs button {
+      border: 1px solid var(--line); background: var(--paper); border-radius: 999px;
+      padding: 7px 14px; color: var(--ink); cursor: pointer; font: inherit;
+    }
+    .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 12px; }
+    .paper-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; }
+    @media (max-width: 720px) { .paper-row { grid-template-columns: 1fr; } }
+    .paper-title { font-weight: 650; }
+    .paper-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .status { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+    .status.done { background: var(--ok-soft); color: var(--ok); }
+    .status.open { background: var(--mid-soft); color: var(--mid); }
+    .empty { color: var(--muted); }
+    html, body { height: 100%; }
+    .chrome { position: sticky; top: 0; z-index: 40; background: var(--bg); flex-shrink: 0; padding-bottom: 2px; }
+    body.exam-on { overflow: hidden; }
+    body.exam-on .app { height: 100%; padding: 28px 20px 0; display: flex; flex-direction: column; }
+    body.exam-on .chrome h1 { margin-bottom: 2px; }
+    body.exam-on .chrome .meta { margin-bottom: 0; }
+    body.exam-on .tabs { margin: 10px 0 0; }
+    body.exam-on #panel-latest.active { display: flex; flex: 1; min-height: 0; }
+    #panel-latest:not(.active) .exam-frame { display: none; }
+    body.exam-on .exam-frame {
+      flex: 1; width: 100%; height: 100%; border: 0; border-radius: 0;
+      background: var(--bg); position: relative; z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="chrome">
+      <h1>考试助手</h1>
+      <div class="meta" id="meta">正在读取记录…</div>
+      <nav class="tabs" id="tabs">
+        <button type="button" data-tab="latest" class="active">最近一次试卷</button>
+        <button type="button" data-tab="papers">历史试卷</button>
+      </nav>
+    </header>
+    <section class="panel active" id="panel-latest"></section>
+    <section class="panel" id="panel-papers"></section>
+  </div>
+  <script>
+    function $(id) { return document.getElementById(id); }
+    function escapeHtml(text) {
+      return String(text || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    function fmtTime(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
+    }
+    function pageHref(page) {
+      if (!page) return "";
+      if (/^https?:\/\//i.test(page)) return page;
+      return page.startsWith("/pages/") ? page : "/pages/" + page.replace(/^pages\//, "");
+    }
+    function accText(row) {
+      if (!row.submitted) return "未交卷";
+      if (row.accuracy == null) return "已交卷";
+      return Math.round(row.accuracy * 100) + "% · 对 " + (row.correct || 0);
+    }
+    function showTab(name) {
+      const tab = name === "papers" ? "papers" : "latest";
+      document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
+      $("panel-latest").classList.toggle("active", tab === "latest");
+      $("panel-papers").classList.toggle("active", tab === "papers");
+      document.body.classList.toggle("exam-on", tab === "latest" && !!document.querySelector("#panel-latest .exam-frame"));
+      if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
+    }
+    function paperCard(row, withOpen) {
+      const href = pageHref(row.page);
+      const status = row.submitted
+        ? `<span class="status done">已交卷</span>`
+        : `<span class="status open">未交卷</span>`;
+      const open = withOpen && href
+        ? `<a href="${escapeHtml(href)}" data-open-exam>打开试卷</a>`
+        : "";
+      return `<div class="card">
+        <div class="paper-row">
+          <div>
+            <div class="paper-title">${escapeHtml(row.title || "未命名试卷")}</div>
+            <div class="paper-sub">${escapeHtml([row.source, row.mode, (row.questionCount || 0) + " 题", fmtTime(row.submittedAt || row.createdAt)].filter(Boolean).join(" · "))}</div>
+          </div>
+          <div>${status} · ${escapeHtml(accText(row))}</div>
+          <div>${open}</div>
+        </div>
+      </div>`;
+    }
+    function renderLatest(home) {
+      const latest = home.latest || (home.papers || [])[0];
+      const panel = $("panel-latest");
+      if (!latest) {
+        document.body.classList.remove("exam-on");
+        panel.innerHTML = `<div class="card"><p class="empty">还没有试卷。出题后会出现在这里。</p></div>`;
+        return;
+      }
+      const href = pageHref(latest.page);
+      if (href) {
+        panel.innerHTML = `<iframe class="exam-frame" title="最近一次试卷" src="${escapeHtml(href)}"></iframe>`;
+        document.body.classList.add("exam-on");
+      } else {
+        document.body.classList.remove("exam-on");
+        panel.innerHTML = paperCard(latest, false) + `<p class="empty">这套题还没有练习页文件。</p>`;
+      }
+    }
+    function renderPapers(home) {
+      const papers = home.papers || [];
+      if (!papers.length) {
+        $("panel-papers").innerHTML = `<div class="card"><p class="empty">还没有历史试卷。</p></div>`;
+        return;
+      }
+      $("panel-papers").innerHTML = papers.map(row => paperCard(row, true)).join("");
+    }
+    function openExam(href) {
+      const panel = $("panel-latest");
+      let frame = panel.querySelector(".exam-frame");
+      if (!frame) {
+        panel.innerHTML = `<iframe class="exam-frame" title="最近一次试卷" src="${href}"></iframe>`;
+      } else {
+        const next = new URL(href, location.origin).href;
+        if (frame.src !== next) frame.src = href;
+      }
+      showTab("latest");
+    }
+    document.getElementById("tabs").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-tab]");
+      if (btn) showTab(btn.dataset.tab);
+    });
+    document.body.addEventListener("click", (e) => {
+      const examLink = e.target.closest("[data-open-exam]");
+      if (examLink) {
+        e.preventDefault();
+        openExam(examLink.getAttribute("href"));
+      }
+    });
+    window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+    async function load() {
+      try {
+        const homeRes = await fetch("/api/home");
+        const homeBody = await homeRes.json();
+        const home = homeBody.home || {};
+        $("meta").textContent = "更新于 " + fmtTime(home.updatedAt) + " · 试卷 " + (home.papers || []).length + " 套";
+        renderLatest(home);
+        renderPapers(home);
+        const start = new URLSearchParams(location.search).get("tab") || location.hash.slice(1) || "latest";
+        showTab(start);
+      } catch (err) {
+        $("meta").textContent = "读取记录失败，请确认本机记录服务已启动。";
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
