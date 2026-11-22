@@ -14,10 +14,10 @@
 
 ## 学习数据
 
-学习档案保存在：
+数据目录是 `/Users/songyanfei/.exam-assistant/`。下文所说的数据目录都指这里。
 
 ```
-/Users/songyanfei/.exam-assistant/
+数据目录/
 ├── state.json          # 科目、知识点、掌握度与统计
 ├── wrong-items.json    # 错题
 ├── sessions/           # 每次练习记录
@@ -64,4 +64,4 @@ node tests/exam-server.test.js
 - 未提供新材料时，按历史或错题复盘出题
 - 需要总结时直接要报告
 
-默认每轮 5 题，可指定题量、时限和方式。出题后打开本机首页作答，做完后回到对话里告诉助手。
+题量按本轮覆盖范围和目标来定，也可指定题量、时限和方式。出题后打开本机首页作答，做完后回到对话里告诉助手。

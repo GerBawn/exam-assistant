@@ -1,6 +1,6 @@
 ---
 name: 考试助手
-description: 在用户提供学习材料出题、按学习历史或错题复盘练习、或需要学习总结报告时使用。材料、历史和复盘出题都生成交互 HTML 练习页，并由助手在用户电脑启动本机记录服务；总结报告和纯讲解只用文字。根据材料自行判断题型，记录已学内容与错题。学习档案保存在用户 Mac 的 /Users/songyanfei/.exam-assistant/。
+description: 在用户提供学习材料出题、按学习历史或错题复盘练习、或需要学习总结报告时使用。材料、历史和复盘出题都生成交互 HTML 练习页，并由助手在用户电脑启动本机记录服务；总结报告和纯讲解只用文字。根据材料自行判断题型，记录已学内容与错题。学习档案在数据目录 /Users/songyanfei/.exam-assistant/。
 ---
 # 考试助手
 
@@ -8,10 +8,10 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 ## 学习档案
 
-学习档案在 `/Users/songyanfei/.exam-assistant/`。
+数据目录是 `/Users/songyanfei/.exam-assistant/`。下文所说的数据目录都指这里。
 
 ```
-/Users/songyanfei/.exam-assistant/
+数据目录/
 ├── state.json            # 科目、知识点、掌握度、来源索引、统计、已回写的场次
 ├── wrong-items.json      # 错题
 ├── sessions/             # 每次练习的原始作答（含草稿与已交卷）
@@ -51,7 +51,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 }
 ```
 
-若发现更早的练习记录且两端都可读，合并到 `/Users/songyanfei/.exam-assistant/`：保留该目录里已有文件，保留原记录；本目录已持有合并后的全部记录时，迁移才算完成。
+若发现更早的练习记录且两端都可读，合并到数据目录：保留该目录里已有文件，保留原记录；本目录已持有合并后的全部记录时，迁移才算完成。
 
 演示和测试写入临时目录，路径由 `--data-dir` 或 `EXAM_ASSISTANT_DATA_DIR` 指定。档案留在上述目录；对话里反馈本场摘要和建议。
 
@@ -67,7 +67,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 2. 提取知识点，与档案合并，已有知识点复用 id。
 3. 根据内容选题型：定义和区分用单选、多选或判断；流程用排序或填空；原理和案例用简答或案例分析；计算内容用计算题。可混合出题。
 4. 每题记录知识点、材料依据、参考答案和评分要点；考点只来自材料。
-5. 默认每轮五题，服从用户指定数量和难度。按「如何生成 HTML 练习页」出题，先把练习页交给用户；答案和解析在交卷后出现在页面上。
+5. 题量按本轮覆盖范围和目标来定；用户指定数量或难度时，按指定出题。按「如何生成 HTML 练习页」出题，先把练习页交给用户；答案和解析在交卷后出现在页面上。
 6. 用户说做完后，按「收回作答并更新档案」批改并更新档案。
 
 ## 历史出题
@@ -80,7 +80,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 ## 总结报告
 
-以实际档案生成已学范围、练习量、正确率、薄弱点、高频错因、近期变化及下一轮建议。统计标明样本量和计算口径；只有可比历史才判断进退。用户需要文件时，把报告保存到该 Mac 目录的 `reports/`；尚无档案时说明尚无记录。总结报告使用文字或报告文件。
+以实际档案生成已学范围、练习量、正确率、薄弱点、高频错因、近期变化及下一轮建议。统计标明样本量和计算口径；只有可比历史才判断进退。用户需要文件时，把报告保存到数据目录的 `reports/`；尚无档案时说明尚无记录。总结报告使用文字或报告文件。
 
 ## 如何启动本机记录服务
 
@@ -88,10 +88,10 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 出练习页前，由助手在用户电脑启动服务。首页是 `http://127.0.0.1:17922/`，包含「最近一次试卷」和「历史试卷」。
 
-1. 若目录不存在，创建 `/Users/songyanfei/.exam-assistant/` 及其 `sessions/`、`pages/`、`assignments/`、`reports/`。
-2. 把本 skill / 仓库中的 `tools/exam-server.js` 复制为 `/Users/songyanfei/.exam-assistant/exam-server.js`，把 `templates/home.html` 复制为 `/Users/songyanfei/.exam-assistant/home.html`。可附带 `tools/start-exam-server.command` 作备用。
+1. 若数据目录不存在，创建它以及其中的 `sessions/`、`pages/`、`assignments/`、`reports/`。
+2. 把本 skill / 仓库中的 `tools/exam-server.js` 复制为数据目录下的 `exam-server.js`，把 `templates/home.html` 复制为数据目录下的 `home.html`。可附带 `tools/start-exam-server.command` 作备用。
 3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。若返回 `ok: true` 且 `service` 为 `exam-assistant`，复用该进程。
-4. 若尚未启动，在该 Mac 后台运行：`node /Users/songyanfei/.exam-assistant/exam-server.js --data-dir /Users/songyanfei/.exam-assistant`。脚本若发现端口已是本服务，会退出并提示已在运行，因此可重复执行。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
+4. 若尚未启动，在本机后台运行：`node 数据目录/exam-server.js --data-dir 数据目录`。脚本若发现端口已是本服务，会退出并提示已在运行，因此可重复执行。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
 5. 请用户打开首页 `http://127.0.0.1:17922/`；练习页地址是 `http://127.0.0.1:17922/pages/文件名.html`。需要时可用系统命令帮用户打开。
 6. 若启动失败，说明原因，并使用「服务未开时交卷自动下载 JSON」。
 
@@ -103,7 +103,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 2. 复制本 skill 目录或仓库中的 `templates/practice.html`，沿用模板内的样式和脚本。
 3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。
 4. 文件名用可读名称，例如 `2026-11-22-材料练习.html`。
-5. 把 HTML 写到 `/Users/songyanfei/.exam-assistant/pages/`。
+5. 把 HTML 写到数据目录的 `pages/`。
 6. 立即 POST `http://127.0.0.1:17922/api/assignments`，字段至少包括 `sessionId`、`title`、`questionCount`、`page`（练习页文件名）、`mode`、`durationMinutes`、`source`，首页的「最近一次试卷」随即出现。
 7. 请用户打开 `http://127.0.0.1:17922/`。用一两句话说明：在试卷上作答，上方有倒计时，时间到会自动交卷；答案和解析在交卷后显示在页面上；做完后回到对话里告诉我，我再读取记录批改。交卷记录先落在本机。
 
@@ -167,7 +167,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 用户说做完了、交卷了、保存了，或把 JSON 粘贴 / 发文件过来时：
 
-1. 读取这场 `exam-session-*.json`。先读 `/Users/songyanfei/.exam-assistant/sessions/`（可用 `GET http://127.0.0.1:17922/api/sessions/{sessionId}` 或直接读文件）；若没有，再看用户电脑的下载文件夹，或对话里粘贴的 JSON。
+1. 读取这场 `exam-session-*.json`。先读数据目录的 `sessions/`（可用 `GET http://127.0.0.1:17922/api/sessions/{sessionId}` 或直接读文件）；若没有，再看下载文件夹，或对话里粘贴的 JSON。
 2. 确认 `submitted` 为 `true` 后再批改。若仍是草稿，告诉用户记录还没交卷。
 3. 若该文件还在下载目录，把它放到 `sessions/`。
 4. 先重新读取最新的 `state.json` 和 `wrong-items.json`。若 `state.json` 的 `sessions` 里已经有这个 `sessionId`，根据已有记录给出反馈，保持现有计数和错题列表。
