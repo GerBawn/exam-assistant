@@ -8,7 +8,7 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 ## 学习档案
 
-学习档案在用户 Mac 的 `/Users/songyanfei/.exam-assistant/`。在该 Mac 上直接运行的 agent 使用此绝对路径；远程助手先用 ListMachines 确认该 Mac，再用带 machineId 的文件工具和 Shell 读写该目录、复制文件并启动本机服务。访问需要审批时按正常审批流程执行。本轮该路径无法写入时，说明受阻原因，并告知档案保持原样。
+学习档案在 `/Users/songyanfei/.exam-assistant/`。
 
 ```
 /Users/songyanfei/.exam-assistant/
@@ -88,13 +88,12 @@ description: 在用户提供学习材料出题、按学习历史或错题复盘�
 
 出练习页前，由助手在用户电脑启动服务。首页是 `http://127.0.0.1:17922/`，包含「最近一次试卷」和「历史试卷」。
 
-1. 确认当前要操作的是用户 Mac。远程助手先 ListMachines，再对后续所有文件和进程操作带上该 machineId。
-2. 若目录不存在，创建 `/Users/songyanfei/.exam-assistant/` 及其 `sessions/`、`pages/`、`assignments/`、`reports/`。
-3. 把本 skill / 仓库中的 `tools/exam-server.js` 复制为 `/Users/songyanfei/.exam-assistant/exam-server.js`，把 `templates/home.html` 复制为 `/Users/songyanfei/.exam-assistant/home.html`。可附带 `tools/start-exam-server.command` 作备用。
-4. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。若返回 `ok: true` 且 `service` 为 `exam-assistant`，复用该进程。
-5. 若尚未启动，在该 Mac 后台运行：`node /Users/songyanfei/.exam-assistant/exam-server.js --data-dir /Users/songyanfei/.exam-assistant`。脚本若发现端口已是本服务，会退出并提示已在运行，因此可重复执行。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
-6. 请用户打开首页 `http://127.0.0.1:17922/`；练习页地址是 `http://127.0.0.1:17922/pages/文件名.html`。需要时可用系统命令帮用户打开。
-7. 若启动失败，说明原因，并使用「服务未开时交卷自动下载 JSON」。
+1. 若目录不存在，创建 `/Users/songyanfei/.exam-assistant/` 及其 `sessions/`、`pages/`、`assignments/`、`reports/`。
+2. 把本 skill / 仓库中的 `tools/exam-server.js` 复制为 `/Users/songyanfei/.exam-assistant/exam-server.js`，把 `templates/home.html` 复制为 `/Users/songyanfei/.exam-assistant/home.html`。可附带 `tools/start-exam-server.command` 作备用。
+3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。若返回 `ok: true` 且 `service` 为 `exam-assistant`，复用该进程。
+4. 若尚未启动，在该 Mac 后台运行：`node /Users/songyanfei/.exam-assistant/exam-server.js --data-dir /Users/songyanfei/.exam-assistant`。脚本若发现端口已是本服务，会退出并提示已在运行，因此可重复执行。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
+5. 请用户打开首页 `http://127.0.0.1:17922/`；练习页地址是 `http://127.0.0.1:17922/pages/文件名.html`。需要时可用系统命令帮用户打开。
+6. 若启动失败，说明原因，并使用「服务未开时交卷自动下载 JSON」。
 
 测试本服务时，使用 `--data-dir` 或环境变量 `EXAM_ASSISTANT_DATA_DIR`，指向临时目录。
 
