@@ -16,6 +16,7 @@ const {
   SERVICE_VERSION,
   DEFAULT_DATA_DIR,
   createHandler,
+  buildMap,
   ensureDirs,
   writeJson,
   loadSessionById,
@@ -46,6 +47,7 @@ function request(port, method, urlPath, body) {
       port,
       path: urlPath,
       method,
+      agent: false,
       headers: payload ? {
         "Content-Type": "application/json",
         "Content-Length": String(payload.length),
@@ -352,7 +354,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.1.0");
+  assert.strictEqual(SERVICE_VERSION, "1.1.1");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -506,6 +508,29 @@ async function testMapWithSampleArchive() {
     assert.strictEqual(subjects["科目乙"].dueCount, 2);
   } finally {
     await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function testWrongItemTopicIds() {
+  const root = tmpDir();
+  try {
+    writeJson(path.join(root, "state.json"), { topics: [
+      { id: "t1", topic: "增长", subject: "数学" },
+      { id: "t2", topic: "增长", subject: "经济" },
+      { id: "t3", topic: "成本" },
+    ] });
+    writeJson(path.join(root, "wrong-items.json"), { items: [
+      { id: "w1", topicId: "t2", topic: "增长", status: "pending" },
+      { id: "w2", topicId: "t2", topic: "增长", status: "已掌握" },
+      { id: "w3", topic: "增长", status: "pending" },
+      { id: "w4", topicName: "成本", status: "pending" },
+      { id: "w5", topic_id: "t2", topic: "旧名称", status: "pending" },
+    ] });
+    const map = buildMap(root);
+    assert.deepStrictEqual(map.topics.map(t => t.pendingWrong), [0, 2, 1]);
+    assert.strictEqual(map.summary.pendingWrongCount, 4);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -761,6 +786,7 @@ async function main() {
     ["POST /api/shutdown", testShutdownEndpoint],
     ["/api/map empty dir", testMapEmptyDir],
     ["/api/map with sample archive", testMapWithSampleArchive],
+    ["wrong items match by stable ID or unique legacy name", testWrongItemTopicIds],
   ];
   let failed = 0;
   for (const [name, fn] of tests) {

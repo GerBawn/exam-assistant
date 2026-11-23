@@ -218,7 +218,8 @@
     const session = window.EXAM_SESSION;
     const qs = session.questions || [];
     const materials = Object.fromEntries((session.materials || []).map(m => [m.id, m]));
-    if (!session.durationMinutes && qs.length) session.durationMinutes = qs.length * 2;
+    const minutes = Number(session.durationMinutes);
+    const durationMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
     const state = {
       i: 0,
       answers: {},
@@ -317,8 +318,8 @@
       return qs.filter(q => hasAnswer(state.answers[q.id])).length;
     }
     function remaining() {
-      if (!session.durationMinutes) return null;
-      return session.durationMinutes * 60 - Math.floor((Date.now() - state.startedAt) / 1000);
+      if (!durationMinutes) return null;
+      return durationMinutes * 60 - Math.floor((Date.now() - state.startedAt) / 1000);
     }
     function modeLabel(mode) {
       const value = mode == null ? session.mode : mode;
@@ -332,7 +333,7 @@
     function headerMeta() {
       const bits = [modeLabel()];
       if (state.submitted && session.source) bits.push(session.source);
-      if (session.durationMinutes) bits.push("限时 " + session.durationMinutes + " 分钟");
+      if (durationMinutes) bits.push("限时 " + durationMinutes + " 分钟");
       return bits.filter(Boolean).join(" · ");
     }
     function correctKeys(q) {
@@ -521,6 +522,8 @@
         const correct = grade(q, userAnswer);
         return {
           id: q.id,
+          topicId: q.topicId,
+          wrongItemId: q.wrongItemId,
           topic: q.topic || "",
           kind,
           stem: q.stem || "",
@@ -555,8 +558,9 @@
         mode: session.mode,
         source: session.source || "",
         page: session.page || "",
-        durationMinutes: session.durationMinutes || 0,
-        durationSeconds: (session.durationMinutes || 0) * 60,
+        durationMinutes,
+        durationSeconds: durationMinutes * 60,
+        allowReviewBeforeSubmit: !!session.allowReviewBeforeSubmit,
         usedSeconds: state.usedSeconds,
         items,
         summary: {
@@ -882,16 +886,18 @@
     });
 
     setInterval(() => {
+      if (!booted) return;
+      const el = $("timer");
       if (!state.ticking) {
-        $("timer").textContent = fmt(state.usedSeconds);
+        el.textContent = "用时 " + fmt(state.usedSeconds);
+        el.classList.remove("warn");
         return;
       }
       state.usedSeconds = Math.floor((Date.now() - state.startedAt) / 1000);
       const left = remaining();
-      const el = $("timer");
-      if (left == null) el.textContent = fmt(state.usedSeconds);
+      if (left == null) el.textContent = "用时 " + fmt(state.usedSeconds);
       else {
-        el.textContent = fmt(left);
+        el.textContent = "剩余 " + fmt(left);
         el.classList.toggle("warn", left <= 60);
         if (left <= 0 && !state.submitted) submit();
       }

@@ -43,11 +43,12 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 - `new`：还没有练过，或还没有 `last_seen`。
 - 每道已作答的题：全对则该知识点 `correct` 加 1、`streak` 加 1；答错或「部分对」则 `wrong` 加 1、`streak` 归零。「部分对」计入 `wrong`，不计入 `correct`。
-- 一场覆盖该知识点的练习批改完成后，按累计正确率（`correct / (correct + wrong)`）和 `streak` 写入 `mastery`：
+- 升为已掌握还需要一次到期后的独立回忆。批改前取该点上一场的 `last_seen` 和掌握度，按上面的间隔判断本场开始时是否已到期。若已到期、本场该点的已作答题全部答对，其中有换情境或换问法的题，且卷内其他题、材料及交卷前可见的解析均未给出该题的答案或提示，把本场 ID 记为 `delayedRecallSessionId`。首次学习、仅重做原题或无法核实独立作答时，只计逐题成绩。任一题答错或部分对时清空该点的延迟回忆记录，留待下一次到期复习。
+- 一场练完后，按累计正确率（`correct / (correct + wrong)`）、连对次数和延迟回忆记录写入 `mastery`：
   - 该知识点本场最近一次结果为答错或部分对，或累计正确率小于 60%：`weak`
-  - 累计正确率达到 80%，且连续全对至少 3 次：`mastered`
+  - 累计正确率达到 80%、连续全对至少 3 次，且已有 `delayedRecallSessionId`：`mastered`
   - 其余：`learning`
-- 同时更新 `last_seen`。
+- 以该场交卷时间更新实际作答知识点的 `last_seen`。例如首次练习三题全对，记为 `learning`；满一天后独立答对变式，才有升级依据。旧档案保留已记录的等级和统计；下次批改涉及该点时，能从旧场次核实延迟回忆就补记场次 ID，否则按本轮证据判断。
 
 演示和测试写入临时目录，路径由 `--data-dir` 或 `EXAM_ASSISTANT_DATA_DIR` 指定。
 
@@ -134,7 +135,9 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 ### 复盘变式
 
-默认出变式，保留原考点，从另一个角度提取：换情境、数据、问法、线索或题型，让同一点能被不同线索唤起。用户要求原题重做时才用原题，并记下与原错题的关联。
+先看原题、用户当时的作答和评分要点。选择题的字母要还原成当时的选项内容。能看出错在哪一步，就围绕那一步换个情境或问法；仅凭一个选项难以确定原因时，设计一道能区分几种可能的新题，等作答后再判断。例如把「从 20% 到 25%」答成「增长 5%」，下次可请用户分别写出从 40% 到 50% 增加了几个百分点、相对增长百分之几。
+
+每道复盘题带上原错题的 `wrongItemId` 和该知识点的 `topicId`，包括综合卷中的复盘题。用户要求原题重做时沿用原题，同样保留关联。
 
 ### 解析和评分要点
 
@@ -163,11 +166,11 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 1. 先启动本机记录服务。
 2. 复制 `templates/practice.html`，沿用模板内的样式和脚本。
-3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。默认时限 `durationMinutes = 题目数量 × 2`；用户指定的时间优先。把该值写入题目数据和下面 POST 的 `durationMinutes`。
+3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。按下方约定选择 `durationMinutes`，在题目数据和布置记录里写同一个值。
 4. 文件名用可读名称，例如 `2026-11-22-材料练习.html`。
 5. 把 HTML 写到数据目录的 `pages/`。
 6. 立即 POST `http://127.0.0.1:17922/api/assignments`，字段至少包括 `sessionId`、`title`、`questionCount`、`page`（练习页文件名）、`mode`、`durationMinutes`、`source`，首页的「最近一次试卷」随即出现。
-7. 请用户打开 `http://127.0.0.1:17922/`。用一两句话说明：在试卷上作答，上方有倒计时，时间到会自动交卷；答案和解析在交卷后显示在页面上；做完后回到对话里告诉我，我再读取记录批改。交卷记录先落在本机。
+7. 请用户打开 `http://127.0.0.1:17922/`。普通练习提示「做完点交卷」，限时卷说明时限和到时自动交卷。交卷后可看解析，再回到对话批改。
 
 ### 题目数据格式
 
@@ -177,7 +180,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
   "title": "材料练习",
   "mode": "new",
   "source": "用户材料第 2 节",
-  "durationMinutes": 10,
+  "durationMinutes": 0,
   "allowReviewBeforeSubmit": false,
   "materials": [
     { "id": "m1", "title": "材料 1", "html": "<p>共用材料原文</p>" }
@@ -185,6 +188,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
   "questions": [
     {
       "id": "q1",
+      "topicId": "t1",
       "topic": "知识点名称",
       "kind": "choice",
       "materialId": "m1",
@@ -201,8 +205,9 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 约定：
 
-- `mode`：`new` 新知练习、`wrong` 错题复习、`due` 定期复习、`mixed` 综合练习、`scoped` 指定范围。这些都是新卷一轮限时作答。页面用中文显示方式：`new` 为新知练习、`wrong` 为错题复习、`due` 为定期复习、`mixed` 为综合练习、`scoped` 为指定范围。较早场次里的 `material` 按新知练习显示，`review` 按错题复习显示，`history` 与 `practice` 按综合练习显示；按档案理解时，`material` 视为 `new`，`review` 视为 `wrong`，`history` 与 `practice` 视为 `mixed`。回看已交卷记录时，根据已保存的 `submitted: true` 记录进入回看。已有场次里的旧取值保持原文件即可。
-- `durationMinutes` 默认等于题目数量 × 2；用户指定的时间优先。
+- `mode`：`new` 新知练习、`wrong` 错题复习、`due` 定期复习、`mixed` 综合练习、`scoped` 指定范围。旧值 `material` 视为 `new`，`review` 视为 `wrong`，`history` 与 `practice` 视为 `mixed`。按已保存的 `submitted: true` 记录进入回看。
+- 普通练习写 `durationMinutes: 0`，记录用时，由用户主动交卷。用户指定时限就用指定分钟数；要求模考或练速度而未指定时长，按本卷的阅读、计算和书写量估算分钟数，交付时说明。
+- 每题写档案中的 `topicId` 和可读的 `topic`。源自错题的题再写 `wrongItemId`，取自 `wrong-items.json` 对应条目的 `id`。旧条目缺少 ID 时，先为它分配并保存稳定 ID，再出复盘题。
 - `allowReviewBeforeSubmit` 默认 `false`，答案、解析和评分要点在交卷后显示。
 - `kind` 必须是以下五种之一：
   - `choice`：单选或判断。判断题也用 `choice`，选项为「正确 / 错误」或「对 / 错」，`answer` 为对应字母。
@@ -220,7 +225,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 模板已内置以下能力，沿用即可：
 
 - 点选项或填写作答；单选可用键盘 A–D 或数字键，左右方向键切题
-- 题号导航、标记、上一题 / 下一题、倒计时（到时自动交卷）
+- 题号导航、标记、上一题 / 下一题、用时显示；限时卷倒计时，到时自动交卷
 - 交卷后显示客观题正确率，并展开解析或评分要点
 - 作答过程中会把草稿 POST 到 `/api/sessions`（`submitted: false`），交卷时再 POST 同一 `sessionId`（`submitted: true`）。服务覆盖同一场次文件，保留原始 `startedAt`。仅在该场仍为未交卷时写入草稿；已交卷记录保持为最终作答。刷新或从首页再次打开同一份练习页时，会读回当时的作答；已交卷则进入回看，沿用当时用时。服务未开时草稿保存在浏览器 localStorage，交卷则自动下载 JSON。服务不在线且页面为独立打开时，显示「手动保存」和「复制作答记录」。
 
@@ -235,7 +240,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 3. 若该文件还在下载目录，把它放到 `sessions/`。
 4. 先重新读取最新的 `state.json` 和 `wrong-items.json`。若 `state.json` 的 `sessions` 里已经有这个 `sessionId`，根据已有记录给出反馈，保持现有计数和错题列表。
 5. 若尚未回写：追加本场摘要；按知识点累加 `correct` / `wrong` / `streak`，并按「学习档案」里的掌握度规则更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错或部分对的题；「部分对」计入 `wrong`，不计入 `correct`。客观题以记录里的 `correct` 为起点，必要时复核；主观题依据 `scoring` 评分后再写入对、错或部分对，意思对即可。
-6. 更新 `wrong-items.json`：答错的题写入或更新为 `status: "pending"`，并写上 `topicId` 与 `topic`；主观题若有作答，保存作答和评分要点供回看。答对的复盘题把 `status` 改为 `已掌握`，并更新计数；升到 `mastered` 以「学习档案」里的累计表现为准。
+6. 更新 `wrong-items.json`。首次答错或部分对的题建一条 `pending` 记录，保存稳定 `id`、`sessionId`、`questionId`、`topicId`、`topic`、题干、实际作答和评分依据。复盘题按 `wrongItemId` 更新原条目，全对则改为 `已掌握`，答错或部分对仍为 `pending`，保留错误作答供下次出题；空白跳过。只改这道原错题。对旧卷，知识点名称与来源能唯一对应时可补认 `topicId`；复盘题缺少 `wrongItemId` 时，只有试卷来源或原题记录能唯一确认对应错题，才更新其状态。同名或仅同一考点不足以确认关联。
 7. 用几句话反馈本场正确率、薄弱点和下一轮建议。下一轮建议只根据掌握度和到期间隔，指出该隔开再练或该先补的点。
 
 `state.json` 与 `wrong-items.json` 由助手在读完已交卷记录后更新，写入方式见「档案格式」。档案更新后，刷新本机首页的学习地图即可看到最新掌握情况和到期知识点。
@@ -251,7 +256,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
     { "id": "", "title": "", "kind": "file", "address": "", "addedAt": "" }
   ],
   "topics": [
-    { "id": "", "topic": "", "subject": "", "sourceId": "", "source": "", "excerpt": "", "mastery": "learning", "correct": 0, "wrong": 0, "streak": 0, "last_seen": "" }
+    { "id": "", "topic": "", "subject": "", "sourceId": "", "source": "", "excerpt": "", "mastery": "learning", "correct": 0, "wrong": 0, "streak": 0, "last_seen": "", "delayedRecallSessionId": "" }
   ],
   "stats": {
     "practiceCount": 0,
@@ -292,7 +297,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 写入时使用 `topicId`、`topic`、`status`。`status` 为 `pending` 表示仍待复习；消化完成后改为 `已掌握`。本机服务把 `已掌握`、`已复习`、`已消化`、`已完成`，以及 `done`、`resolved`、`reviewed`、`cleared`、`mastered`、`closed` 视为已消化。读取旧档案时，服务也兼容 `topic_id`、`knowledgeId`、`reviewStatus` 等较早字段名，新写入用上面的标准字段。
 
-更新档案前重新读取最新内容；使用唯一会话 id、原子写入（先写临时文件再改名）。若写入冲突，在数据目录内合并：按 `sessionId` 去重；已写入档案的场次保持原计数，不再重复累计；知识点的 `last_seen` 取较新的，并沿用该条上的 `mastery` 与 `streak`；`correct` 与 `wrong` 取较大值；`sources` 按 `id` 去重，同一 `id` 保留已有条目，缺的标题或地址用另一份补上，`addedAt` 取较早的。
+更新档案前重新读取最新内容；使用唯一会话 id、原子写入（先写临时文件再改名）。若写入冲突，在数据目录内合并：按 `sessionId` 去重；已写入档案的场次保持原计数，不再重复累计；知识点的 `last_seen` 取较新的，并沿用该条上的 `mastery`、`streak` 和 `delayedRecallSessionId`（包括已清空的值）；`correct` 与 `wrong` 取较大值；`sources` 按 `id` 去重，同一 `id` 保留已有条目，缺的标题或地址用另一份补上，`addedAt` 取较早的。
 
 ## 学习地图
 

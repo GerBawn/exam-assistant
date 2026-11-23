@@ -9,7 +9,7 @@ const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.1.0";
+const SERVICE_VERSION = "1.1.1";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -405,15 +405,13 @@ function isPendingWrong(item) {
   return !SETTLED_WRONG.has(status) && !SETTLED_WRONG.has(status.toLowerCase());
 }
 
-function wrongItemTopicKeys(item) {
-  const keys = [];
-  for (const field of ["topicId", "topic_id", "knowledgeId"]) {
-    if (item[field]) keys.push(String(item[field]).trim());
-  }
-  for (const field of ["topic", "topicName", "knowledge"]) {
-    if (item[field]) keys.push(String(item[field]).trim());
-  }
-  return keys.filter(Boolean);
+function matchWrongItemTopic(item, topics) {
+  const id = String(item.topicId || item.topic_id || item.knowledgeId || "").trim();
+  if (id) return topics.find(topic => topic.id === id);
+  const name = String(item.topic || item.topicName || item.knowledge || "").trim();
+  if (!name) return;
+  const matches = topics.filter(topic => topic.topic === name);
+  if (matches.length === 1) return matches[0];
 }
 
 function emptyMap(updatedAt) {
@@ -476,8 +474,7 @@ function buildMap(root, now = Date.now()) {
     });
 
   for (const item of pendingItems) {
-    const keys = wrongItemTopicKeys(item);
-    const match = packedTopics.find((topic) => keys.includes(topic.id) || (topic.topic && keys.includes(topic.topic)));
+    const match = matchWrongItemTopic(item, packedTopics);
     if (match) match.pendingWrong += 1;
   }
 
