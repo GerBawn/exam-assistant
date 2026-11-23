@@ -128,6 +128,14 @@
       if (/^https?:\/\//i.test(page)) return page;
       return page.startsWith("/pages/") ? page : "/pages/" + page.replace(/^pages\//, "");
     }
+    function modeLabel(mode) {
+      if (mode === "new" || mode === "material") return "新知练习";
+      if (mode === "wrong" || mode === "review") return "错题复习";
+      if (mode === "due") return "定期复习";
+      if (mode === "mixed" || mode === "history" || mode === "practice") return "综合练习";
+      if (mode === "scoped") return "指定范围";
+      return "";
+    }
     function accText(row) {
       if (!row.submitted) return "未交卷";
       if (row.accuracy == null) return "已交卷";
@@ -165,7 +173,7 @@
         <div class="paper-row">
           <div>
             <div class="paper-title">${escapeHtml(row.title || "未命名试卷")}</div>
-            <div class="paper-sub">${escapeHtml([row.source, row.mode, (row.questionCount || 0) + " 题", fmtTime(row.submittedAt || row.createdAt)].filter(Boolean).join(" · "))}</div>
+            <div class="paper-sub">${escapeHtml([row.source, modeLabel(row.mode), (row.questionCount || 0) + " 题", fmtTime(row.submittedAt || row.createdAt)].filter(Boolean).join(" · "))}</div>
           </div>
           <div>${status} · ${escapeHtml(accText(row))}</div>
           <div>${open}</div>

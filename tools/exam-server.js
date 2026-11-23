@@ -5,9 +5,11 @@ const http = require("http");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
+const SERVICE_VERSION = "1.1.0";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -605,7 +607,7 @@ function safePagePath(root, rel) {
   return target;
 }
 
-function createHandler(root, port) {
+function createHandler(root, port, controls) {
   return (req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
     const pathname = decodeURIComponent(url.pathname);
@@ -626,6 +628,7 @@ function createHandler(root, port) {
           ok: true,
           runtime: "node",
           service: SERVICE_NAME,
+          version: SERVICE_VERSION,
           dataDir: root,
           sessionCount: listSessionFiles(root).length,
           port,
@@ -693,6 +696,13 @@ function createHandler(root, port) {
     }
 
     if (req.method === "POST") {
+      if (pathname === "/api/shutdown") {
+        sendJson(res, 200, { ok: true, shuttingDown: true });
+        setImmediate(() => {
+          if (controls && typeof controls.shutdown === "function") controls.shutdown();
+        });
+        return;
+      }
       if (!["/api/sessions", "/api/assignments"].includes(pathname)) {
         sendJson(res, 404, { ok: false, error: "未找到接口" });
         return;
@@ -754,6 +764,114 @@ function createHandler(root, port) {
 
     sendJson(res, 405, { ok: false, error: "方法不允许" });
   };
+}
+
+
+function sameDataDir(a, b) {
+  if (!a || !b) return false;
+  return path.resolve(String(a)) === path.resolve(String(b));
+}
+
+function shouldReuse(existing, root, version = SERVICE_VERSION) {
+  return Boolean(
+    existing &&
+    existing.ok &&
+    existing.runtime === "node" &&
+    existing.service === SERVICE_NAME &&
+    existing.version === version &&
+    sameDataDir(existing.dataDir, root)
+  );
+}
+
+function listenPids(port) {
+  const pids = new Set();
+  const add = (text) => {
+    const raw = String(text || "");
+    for (const m of raw.matchAll(/pid=(\d+)/g)) {
+      const n = Number(m[1]);
+      if (Number.isInteger(n) && n > 0 && n !== process.pid) pids.add(n);
+    }
+    if (!/pid=/.test(raw)) {
+      for (const token of raw.split(/[^\d]+/)) {
+        const n = Number(token);
+        if (Number.isInteger(n) && n > 0 && n !== process.pid && n !== Number(port)) pids.add(n);
+      }
+    }
+  };
+  const run = (cmd, captureErr) => {
+    try {
+      add(execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", captureErr ? "pipe" : "ignore"] }));
+    } catch (err) {
+      if (captureErr) add(`${err && err.stdout ? err.stdout : ""}\n${err && err.stderr ? err.stderr : ""}`);
+    }
+  };
+  run(`lsof -nP -iTCP:${Number(port)} -sTCP:LISTEN -t`, false);
+  run(`fuser ${Number(port)}/tcp`, true);
+  run(`ss -lptn "sport = :${Number(port)}"`, false);
+  return [...pids];
+}
+
+function postJson(port, pathname, body, timeout = 1000) {
+  return new Promise((resolve) => {
+    const payload = Buffer.from(JSON.stringify(body == null ? {} : body));
+    const req = http.request({
+      host: "127.0.0.1",
+      port,
+      path: pathname,
+      method: "POST",
+      timeout,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(payload.length),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntilDown(port, timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const health = await probe(port);
+    if (!health) return true;
+    await sleep(50);
+  }
+  return !(await probe(port));
+}
+
+async function stopExamAssistant(port) {
+  const existing = await probe(port);
+  if (!existing || !existing.ok || existing.service !== SERVICE_NAME) return false;
+  await postJson(port, "/api/shutdown", {});
+  if (await waitUntilDown(port, 2000)) return true;
+  for (const pid of listenPids(port)) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  if (await waitUntilDown(port, 2000)) return true;
+  for (const pid of listenPids(port)) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  return waitUntilDown(port, 1000);
 }
 
 function probe(port) {
@@ -818,17 +936,32 @@ async function main(argv = process.argv) {
   ensureDirs(root);
 
   const existing = await probe(args.port);
-  if (existing && existing.ok && existing.runtime === "node" && existing.service === SERVICE_NAME) {
+  if (shouldReuse(existing, root)) {
     console.log(`考试助手记录服务已在运行：http://127.0.0.1:${args.port}`);
     console.log(`记录目录：${existing.dataDir || root}`);
+    console.log(`版本：${existing.version}`);
     return 0;
   }
-  if (existing && existing.ok) {
+  if (existing && existing.ok && existing.service === SERVICE_NAME) {
+    const stopped = await stopExamAssistant(args.port);
+    if (!stopped) {
+      console.error(`无法停止 127.0.0.1:${args.port} 上的旧考试助手记录服务，请先停止后再启动。`);
+      return 1;
+    }
+  } else if (existing && existing.ok) {
     console.error(`127.0.0.1:${args.port} 上已有其他服务在运行，请先停止后再启动考试助手记录服务。`);
     return 1;
   }
 
-  const server = http.createServer(createHandler(root, args.port));
+  const controls = {};
+  const server = http.createServer();
+  controls.shutdown = () => {
+    server.close(() => {
+      console.log("\n已停止。");
+      process.exit(0);
+    });
+  };
+  server.on("request", createHandler(root, args.port, controls));
   try {
     await listen(server, args.port, "127.0.0.1");
   } catch (err) {
@@ -865,6 +998,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_PORT,
   SERVICE_NAME,
+  SERVICE_VERSION,
   DEFAULT_DATA_DIR,
   dataDir,
   ensureDirs,
@@ -879,6 +1013,8 @@ module.exports = {
   parseArgs,
   probe,
   main,
+  shouldReuse,
+  stopExamAssistant,
   buildMap,
   isTopicDue,
   isPendingWrong,

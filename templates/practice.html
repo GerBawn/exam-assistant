@@ -300,10 +300,13 @@
       if (!session.durationMinutes) return null;
       return session.durationMinutes * 60 - Math.floor((Date.now() - state.startedAt) / 1000);
     }
-    function modeLabel() {
-      if (session.mode === "review") return "复盘练习";
-      if (session.mode === "history") return "历史练习";
-      if (session.mode === "material") return "材料练习";
+    function modeLabel(mode) {
+      const value = mode == null ? session.mode : mode;
+      if (value === "new" || value === "material") return "新知练习";
+      if (value === "wrong" || value === "review") return "错题复习";
+      if (value === "due") return "定期复习";
+      if (value === "mixed" || value === "history" || value === "practice") return "综合练习";
+      if (value === "scoped") return "指定范围";
       return "练习";
     }
     function headerMeta() {

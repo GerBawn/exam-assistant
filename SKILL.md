@@ -12,7 +12,7 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ```
 数据目录/
-├── state.json            # 科目、知识点、掌握度、来源索引、统计、已回写的场次
+├── state.json            # 科目、知识点、掌握度、统计、已回写的场次
 ├── wrong-items.json      # 错题
 ├── sessions/             # 每次练习的原始作答（含草稿与已交卷）
 ├── pages/                # 生成过的练习页
@@ -22,14 +22,24 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 └── home.html             # 由助手复制到此目录的首页（含学习地图）
 ```
 
-- `state.json`：科目、知识点、掌握度、来源索引、统计，以及已经用于更新档案的 `sessionId` 列表。
-- `wrong-items.json`：题干、用户答案、正确要点、材料依据、时间、知识点、复盘状态。
+- `state.json`：科目、知识点、掌握度、统计，以及已经用于更新档案的 `sessionId` 列表。
+- `wrong-items.json`：题干、用户答案、正确要点、材料依据、时间、知识点、复盘状态。标准字段见下文示例。
 - `sessions/`：每次练习的独立记录，文件名形如 `exam-session-{sessionId}.json`。
 - `pages/`、`assignments/`：练习页副本和出题索引，供本机首页展示「最近一次试卷」和「历史试卷」。
 
-每轮先读档案；目录或文件尚不存在时再初始化。出题时写入练习页、布置记录和待答状态。本机服务把作答写入 `sessions/`；交卷后由助手按「收回作答并更新档案」更新 `state.json` 与 `wrong-items.json`。更新前重新读取最新内容；使用唯一会话 id、原子写入（先写临时文件再改名）；冲突时合并两边的进度。
+每轮先读档案；目录或文件尚不存在时再初始化。出题时写入练习页、布置记录和待答状态。本机服务把作答写入 `sessions/`；交卷后由助手按「收回作答并更新档案」更新 `state.json` 与 `wrong-items.json`。更新前重新读取最新内容；使用唯一会话 id、原子写入（先写临时文件再改名）。若写入冲突，在数据目录内合并：按 `sessionId` 去重；已写入档案的场次保持原计数，不再重复累计；知识点的 `last_seen` 取较新的，并沿用该条上的 `mastery` 与 `streak`；`correct` 与 `wrong` 取较大值。
 
-每个知识点至少含 `id`、`topic`、`source`、`mastery`（new / learning / weak / mastered）、`correct`、`wrong`、`last_seen`，并保留可追溯的材料摘录或来源。有科目时写入 `subject`，学习地图按科目分组展示。
+每个知识点至少含 `id`、`topic`、`source`、`mastery`（new / learning / weak / mastered）、`correct`、`wrong`、`streak`、`last_seen`，并保留可追溯的材料摘录或来源。有科目时写入 `subject`，学习地图按科目分组展示；没有科目时，地图归入「未分科目」。
+
+掌握度按下面规则更新。到期间隔不变：`learning` / `weak` 满 1 天到期，`mastered` 满 7 天到期，`new` 或还没有 `last_seen` 的立即到期。
+
+- `new`：还没有练过，或还没有 `last_seen`。
+- 每道已作答的题：全对则该知识点 `correct` 加 1、`streak` 加 1；答错或「部分对」则 `wrong` 加 1、`streak` 归零。「部分对」计入 `wrong`，不计入 `correct`。
+- 一场覆盖该知识点的练习批改完成后，按累计正确率（`correct / (correct + wrong)`）和 `streak` 写入 `mastery`：
+  - 该知识点本场最近一次结果为答错或部分对，或累计正确率小于 60%：`weak`
+  - 累计正确率达到 80%，且连续全对至少 3 次：`mastered`
+  - 其余：`learning`
+- 同时更新 `last_seen`。
 
 `state.json` 建议结构：
 
@@ -37,7 +47,7 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 {
   "updatedAt": "ISO-8601",
   "topics": [
-    { "id": "", "topic": "", "subject": "", "source": "", "mastery": "learning", "correct": 0, "wrong": 0, "last_seen": "" }
+    { "id": "", "topic": "", "subject": "", "source": "", "mastery": "learning", "correct": 0, "wrong": 0, "streak": 0, "last_seen": "" }
   ],
   "stats": {
     "practiceCount": 0,
@@ -51,7 +61,32 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 }
 ```
 
-若发现更早的练习记录且两端都可读，合并到数据目录：保留该目录里已有文件，保留原记录；本目录已持有合并后的全部记录时，迁移才算完成。
+`wrong-items.json` 建议结构：
+
+```json
+{
+  "updatedAt": "ISO-8601",
+  "items": [
+    {
+      "id": "",
+      "sessionId": "",
+      "questionId": "",
+      "topicId": "",
+      "topic": "",
+      "stem": "",
+      "userAnswer": "",
+      "answer": "",
+      "scoring": "",
+      "analysis": "",
+      "source": "",
+      "status": "pending",
+      "savedAt": ""
+    }
+  ]
+}
+```
+
+写入时使用 `topicId`、`topic`、`status`。`status` 为 `pending` 表示仍待复习；消化完成后改为 `已掌握`。本机服务把 `已掌握`、`已复习`、`已消化`、`已完成`，以及 `done`、`resolved`、`reviewed`、`cleared`、`mastered`、`closed` 视为已消化。读取旧档案时，服务也兼容 `topic_id`、`knowledgeId`、`reviewStatus` 等较早字段名，新写入用上面的标准字段。
 
 演示和测试写入临时目录，路径由 `--data-dir` 或 `EXAM_ASSISTANT_DATA_DIR` 指定。档案留在上述目录；对话里反馈本场摘要和建议。
 
@@ -87,16 +122,20 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ## 判断出题方式
 
-优先按用户已经点名的方式出题。用户要练习但还没说明方式时，先用下面四个选项询问，确认后再出题：
+优先按用户已经点名的方式出题。
+
+用户刚提供了新材料，且还没有点名练习方式时，按新知练习出题，`mode` 为 `new`。
+
+用户要练习但还没说明方式，并且不是刚提供新材料时，先用下面四个选项询问，确认后再出题：
 
 1. 新知练习：刚学或刚录入、还没练过的知识点。
 2. 错题复习：从待复习错题出变式。
 3. 定期复习：按上次练习时间，把已经到期的知识点拿出来练。
 4. 综合练习：按档案自动组卷。
 
-用户已经点名某份材料、某个科目或某个知识点时，直接按这个范围出题，不必再出示这四个选项。
+指定范围练习（`mode` 为 `scoped`）只在这两种情况使用：用户点名的是档案里已有的科目或知识点；或者明确指定一份已经用过的材料范围。第一次收录新材料并开始练习时，走新知练习，而不是指定范围。
 
-四种方式和按指定范围出题，都生成交互 HTML 练习页，并启动本机记录服务。写题时按「如何出题」来写。总结报告和纯讲解（只讲概念）使用文字。
+四种方式和按指定范围出题，都生成交互 HTML 练习页，启动本机记录服务，并在用户做完后按「收回作答并更新档案」更新档案。写题时按「如何出题」来写。总结报告和纯讲解（只讲概念）使用文字。
 
 ## 新知练习
 
@@ -104,17 +143,17 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 1. 阅读用户提供的文档、附件、粘贴或链接；未能读取的部分如实标明，只依据已读到的内容出题。
 2. 提取知识点，与档案合并，已有知识点复用 id。
-3. 本题主要覆盖这些新知识点，按「如何出题」选题型并组卷。
+3. 本轮主要覆盖这些新知识点，按「如何出题」选题型并组卷。
 4. 按「如何生成 HTML 练习页」生成练习页，`mode` 为 `new`；先把练习页交给用户，答案和解析在交卷后出现在页面上。
 5. 用户说做完后，按「收回作答并更新档案」批改并更新档案。
 
 ## 错题复习
 
-从待复习错题出变式，默认不出原题；用户要求原题重做时才用原题，并记下与原错题的关联。没有待复习错题时说明情况，再改用其他方式。按同样流程生成练习页，`mode` 为 `wrong`。回看已交卷的试卷时，根据已保存的 `submitted: true` 记录进入回看。
+从待复习错题出变式，默认出变式；用户要求原题重做时才用原题，并记下与原错题的关联。没有待复习错题时说明情况，再改用其他方式。按同样流程生成练习页，`mode` 为 `wrong`，并在用户做完后收回作答。回看已交卷的试卷时，根据已保存的 `submitted: true` 记录进入回看。
 
 ## 定期复习
 
-按上次练习时间把到期的知识点拿出来，包括学习中的，以及已掌握但间隔已到的。到期规则：掌握度为 `learning` 或 `weak` 的，距上次练习满 1 天即到期；`mastered` 的满 7 天到期；`new` 或还没有 `last_seen` 的立即到期。本轮没有到期知识点时说明情况，并改用其他方式。按同样流程生成练习页，`mode` 为 `due`。
+按上次练习时间把到期的知识点拿出来，包括学习中的，以及已掌握但间隔已到的。到期规则：掌握度为 `learning` 或 `weak` 的，距上次练习满 1 天即到期；`mastered` 的满 7 天到期；`new` 或还没有 `last_seen` 的立即到期。本轮没有到期知识点时说明情况，并改用其他方式。按同样流程生成练习页，`mode` 为 `due`，并在用户做完后收回作答。
 
 ## 综合练习
 
@@ -122,7 +161,7 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ## 指定范围练习
 
-用户已经点名某份材料、某个科目或某个知识点时，按该范围出题，`mode` 为 `scoped`。仍按「如何出题」组卷，并生成练习页。
+用户点名档案里已有的科目或知识点，或明确指定一份已经用过的材料范围时，按该范围出题，`mode` 为 `scoped`。仍按「如何出题」组卷；需要时提取或合并知识点，已有知识点复用 id。按「如何生成 HTML 练习页」生成练习页并启动本机记录服务。用户说做完后，按「收回作答并更新档案」批改并更新档案。
 
 ## 总结报告
 
@@ -130,14 +169,16 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ## 如何启动本机记录服务
 
-练习页是本地 HTML，浏览器通过本机服务写入档案目录。仓库 `tools/exam-server.js` 是一个绑定 `127.0.0.1:17922` 的小服务（Node 标准库，无额外依赖）。需要本机已安装 Node.js。
+练习页是本地 HTML，浏览器通过本机服务写入档案目录。`tools/exam-server.js` 是一个绑定 `127.0.0.1:17922` 的小服务（Node 标准库，无额外依赖）。需要本机已安装 Node.js。
+
+这些文件的来源是仓库 https://github.com/GerBawn/exam-assistant 。若 `tools/` 与 `templates/` 就在这份 `SKILL.md` 旁边，直接用旁边的文件；否则从该仓库取同样的 `tools/exam-server.js` 和 `templates/home.html`、`templates/practice.html`。
 
 出练习页前，由助手在用户电脑启动服务。首页是 `http://127.0.0.1:17922/`，包含「最近一次试卷」「历史试卷」和「学习地图」。学习地图在首页的一个标签里，打开 `http://127.0.0.1:17922/#map` 会直接进入该标签。
 
 1. 若数据目录不存在，创建它以及其中的 `sessions/`、`pages/`、`assignments/`、`reports/`。
-2. 把本 skill / 仓库中的 `tools/exam-server.js` 复制为数据目录下的 `exam-server.js`，把 `templates/home.html` 复制为数据目录下的 `home.html`。每次启动都用仓库或 skill 里的模板覆盖已有副本，以便首页出现最新的「学习地图」标签。可附带 `tools/start-exam-server.command` 作备用。
-3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。若返回 `ok: true` 且 `service` 为 `exam-assistant`，复用该进程。
-4. 若尚未启动，在本机后台运行：`node 数据目录/exam-server.js --data-dir 数据目录`。脚本若发现端口已是本服务，会退出并提示已在运行，因此可重复执行。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
+2. 每次启动都把即将使用的 `tools/exam-server.js` 覆盖复制为数据目录下的 `exam-server.js`，把 `templates/home.html` 覆盖复制为数据目录下的 `home.html`。只复制文件不会更新已经在跑的进程。可附带 `tools/start-exam-server.command` 作备用；该脚本也会先覆盖复制再启动或复用。
+3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。同时满足以下条件时，复用该进程：`ok` 为 true，`service` 为 `exam-assistant`，`dataDir` 与本次数据目录相同，`version` 与即将启动的那份 `exam-server.js` 里的 `SERVICE_VERSION` 一致（也出现在 health 的 `version` 字段）。可用 `node -e "console.log(require('./exam-server.js').SERVICE_VERSION)"` 在即将启动的那份文件上读取版本。
+4. 若尚未启动，或版本不一致，或 `dataDir` 不同：若端口上已是本服务，先停掉再启动。在本机后台运行：`node 数据目录/exam-server.js --data-dir 数据目录`。脚本在版本和数据目录都一致时会提示已在运行并退出；不一致时会先停掉旧进程再启动。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
 5. 请用户打开首页 `http://127.0.0.1:17922/`；练习页地址是 `http://127.0.0.1:17922/pages/文件名.html`。需要打开学习地图时，使用 `http://127.0.0.1:17922/#map`。需要时可用系统命令帮用户打开。
 6. 若启动失败，说明原因，并使用「服务未开时交卷自动下载 JSON」。
 
@@ -145,7 +186,7 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ## 学习地图
 
-学习地图展示在本机首页的「学习地图」标签中，按档案里的科目和知识点汇总掌握情况，数据来自 `state.json` 与 `wrong-items.json`。上面是未练 / 薄弱 / 学习中 / 掌握的数量，以及练习场次、正确率、待复习错题和今天到期的知识点数；下面按科目列出各知识点的作答题次、对错、正确率、待复习和到期情况。还没有档案时，页面给出空状态说明。
+学习地图展示在本机首页的「学习地图」标签中，按档案里的科目和知识点汇总掌握情况，数据来自 `state.json` 与 `wrong-items.json`。上面是未练 / 薄弱 / 学习中 / 掌握的数量，以及练习场次、正确率、待复习错题和今天到期的知识点数；下面按科目列出各知识点的作答题次、对错、正确率、待复习和到期情况。还没有 `state.json` 时，`GET /api/map` 返回空地图，页面给出空状态说明；即使已有 `wrong-items.json`，也先显示空状态。
 
 到期规则与「定期复习」相同：`learning` / `weak` 满 1 天到期，`mastered` 满 7 天到期，`new` 或还没有 `last_seen` 的立即到期。收回作答并更新 `state.json` 后，刷新学习地图即可看到最新档案。
 
@@ -153,15 +194,15 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 ## 如何生成 HTML 练习页
 
+`templates/practice.html` 同样优先使用这份 `SKILL.md` 旁边的文件，否则从 https://github.com/GerBawn/exam-assistant 获取。
+
 1. 先启动本机记录服务。
-2. 复制本 skill 目录或仓库中的 `templates/practice.html`，沿用模板内的样式和脚本。
-3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。
+2. 复制 `templates/practice.html`，沿用模板内的样式和脚本。
+3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。默认时限 `durationMinutes = 题目数量 × 2`；用户指定的时间优先。把该值写入题目数据和下面 POST 的 `durationMinutes`。
 4. 文件名用可读名称，例如 `2026-11-22-材料练习.html`。
 5. 把 HTML 写到数据目录的 `pages/`。
 6. 立即 POST `http://127.0.0.1:17922/api/assignments`，字段至少包括 `sessionId`、`title`、`questionCount`、`page`（练习页文件名）、`mode`、`durationMinutes`、`source`，首页的「最近一次试卷」随即出现。
 7. 请用户打开 `http://127.0.0.1:17922/`。用一两句话说明：在试卷上作答，上方有倒计时，时间到会自动交卷；答案和解析在交卷后显示在页面上；做完后回到对话里告诉我，我再读取记录批改。交卷记录先落在本机。
-
-默认时限 `durationMinutes = 题目数量 × 2`；用户指定的时间优先，并写入题目数据。
 
 ### 题目数据格式
 
@@ -194,7 +235,8 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 
 约定：
 
-- `mode`：`new` 新知练习、`wrong` 错题复习、`due` 定期复习、`mixed` 综合练习、`scoped` 按指定材料、科目或知识点出题。这些都是新卷一轮限时作答。回看已交卷记录时，根据已保存的 `submitted: true` 记录进入回看。若已有场次使用较早的 `material`、`history`、`review` 或 `practice`，分别按 `new`、`mixed`、`wrong`、`mixed` 理解即可，不必改写旧文件。
+- `mode`：`new` 新知练习、`wrong` 错题复习、`due` 定期复习、`mixed` 综合练习、`scoped` 指定范围。这些都是新卷一轮限时作答。页面用中文显示方式：`new` 为新知练习、`wrong` 为错题复习、`due` 为定期复习、`mixed` 为综合练习、`scoped` 为指定范围。较早场次里的 `material` 按新知练习显示，`review` 按错题复习显示，`history` 与 `practice` 按综合练习显示；按档案理解时，`material` 视为 `new`，`review` 视为 `wrong`，`history` 与 `practice` 视为 `mixed`。回看已交卷记录时，根据已保存的 `submitted: true` 记录进入回看。已有场次里的旧取值保持原文件即可。
+- `durationMinutes` 默认等于题目数量 × 2；用户指定的时间优先。
 - `allowReviewBeforeSubmit` 默认 `false`，答案、解析和评分要点在交卷后显示。
 - `kind` 必须是以下五种之一：
   - `choice`：单选或判断。判断题也用 `choice`，选项为「正确 / 错误」或「对 / 错」，`answer` 为对应字母。
@@ -225,8 +267,8 @@ description: 在用户提供学习材料出题、按新知练习、错题复习�
 2. 确认 `submitted` 为 `true` 后再批改。若仍是草稿，告诉用户记录还没交卷。
 3. 若该文件还在下载目录，把它放到 `sessions/`。
 4. 先重新读取最新的 `state.json` 和 `wrong-items.json`。若 `state.json` 的 `sessions` 里已经有这个 `sessionId`，根据已有记录给出反馈，保持现有计数和错题列表。
-5. 若尚未回写：追加本场摘要；按知识点累加 `correct` / `wrong` 并更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错的题。客观题以记录里的 `correct` 为起点，必要时复核；主观题依据 `scoring` 评分后再写入对、错或部分对，意思对即可。
-6. 更新 `wrong-items.json`：答错的题写入或更新为待复习；主观题若有作答，保存作答和评分要点供回看。答对的复盘题更新复盘状态和计数；升到 `mastered` 以累计表现为准。
+5. 若尚未回写：追加本场摘要；按知识点累加 `correct` / `wrong` / `streak`，并按「学习档案」里的掌握度规则更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错或部分对的题；「部分对」计入 `wrong`，不计入 `correct`。客观题以记录里的 `correct` 为起点，必要时复核；主观题依据 `scoring` 评分后再写入对、错或部分对，意思对即可。
+6. 更新 `wrong-items.json`：答错的题写入或更新为 `status: "pending"`，并写上 `topicId` 与 `topic`；主观题若有作答，保存作答和评分要点供回看。答对的复盘题把 `status` 改为 `已掌握`，并更新计数；升到 `mastered` 以「学习档案」里的累计表现为准。
 7. 用几句话反馈本场正确率、薄弱点和下一轮建议。
 
 `state.json` 与 `wrong-items.json` 由助手在读完已交卷记录后更新。档案更新后，刷新本机首页的学习地图即可看到最新掌握情况和到期知识点。

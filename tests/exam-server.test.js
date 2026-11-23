@@ -9,15 +9,18 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const serverPath = path.resolve(__dirname, "..", "tools", "exam-server.js");
+const commandPath = path.resolve(__dirname, "..", "tools", "start-exam-server.command");
 const {
   DEFAULT_PORT,
   SERVICE_NAME,
+  SERVICE_VERSION,
   DEFAULT_DATA_DIR,
   createHandler,
   ensureDirs,
   writeJson,
   loadSessionById,
   isSubmitted,
+  shouldReuse,
 } = require(serverPath);
 
 function tmpDir() {
@@ -78,21 +81,81 @@ function tryConnect(host, port, urlPath) {
 }
 
 async function startTestServer(root, preferredPort) {
-  const handler = createHandler(root, preferredPort || DEFAULT_PORT);
-  const server = http.createServer(handler);
+  const holder = { handler: null };
+  const server = http.createServer((req, res) => holder.handler(req, res));
+  const controls = {
+    shutdown() {
+      server.close();
+    },
+  };
   let addr;
   try {
     addr = await listen(server, preferredPort || DEFAULT_PORT, "127.0.0.1");
   } catch (err) {
     if (err && err.code === "EADDRINUSE") {
       addr = await listen(server, 0, "127.0.0.1");
-      server.removeAllListeners("request");
-      server.on("request", createHandler(root, addr.port));
     } else {
       throw err;
     }
   }
+  holder.handler = createHandler(root, addr.port, controls);
   return { server, port: addr.port, address: addr.address };
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close((err) => (err ? reject(err) : resolve(port)));
+    });
+    server.on("error", reject);
+  });
+}
+
+function waitForOutput(child, pattern, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("timed out waiting for " + pattern + " in: " + out));
+    }, timeoutMs);
+    const take = (buf) => {
+      out += buf.toString();
+      if (pattern.test(out)) {
+        clearTimeout(timer);
+        child.stdout.off("data", take);
+        child.stderr.off("data", take);
+        resolve(out);
+      }
+    };
+    child.stdout.on("data", take);
+    child.stderr.on("data", take);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function stopChild(child) {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode != null || child.killed) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+    }, 2000);
+    child.on("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    try { child.kill("SIGTERM"); } catch {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
 }
 
 async function testHealthAndBind() {
@@ -106,6 +169,8 @@ async function testHealthAndBind() {
     assert.strictEqual(health.data.ok, true);
     assert.strictEqual(health.data.runtime, "node");
     assert.strictEqual(health.data.service, SERVICE_NAME);
+    assert.strictEqual(health.data.version, SERVICE_VERSION);
+    assert.ok(SERVICE_VERSION);
     assert.strictEqual(health.data.dataDir, root);
     assert.strictEqual(health.data.port, port);
     assert.ok(String(health.data.homeUrl).includes("127.0.0.1"));
@@ -287,6 +352,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
+  assert.strictEqual(SERVICE_VERSION, "1.1.0");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -303,6 +369,19 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(home.includes("历史试卷"));
   assert.ok(home.includes("学习地图"));
   assert.ok(home.includes("/api/map"));
+  assert.ok(home.includes("function modeLabel"));
+  assert.ok(home.includes("新知练习"));
+  assert.ok(home.includes("错题复习"));
+  assert.ok(home.includes("定期复习"));
+  assert.ok(home.includes("综合练习"));
+  assert.ok(home.includes("指定范围"));
+  assert.ok(home.includes("modeLabel(row.mode)"));
+  assert.ok(practice.includes("function modeLabel"));
+  assert.ok(practice.includes("新知练习"));
+  assert.ok(practice.includes("错题复习"));
+  assert.ok(practice.includes("定期复习"));
+  assert.ok(practice.includes("综合练习"));
+  assert.ok(practice.includes("指定范围"));
   assert.ok(!home.includes("能力地图"));
   assert.ok(!home.includes("公考"));
   assert.ok(!home.toLowerCase().includes("gongkao"));
@@ -373,6 +452,7 @@ async function testMapWithSampleArchive() {
         { id: "t-learn-due", topic: "学习中到期", subject: "科目乙", source: "材料B", mastery: "learning", correct: 3, wrong: 2, last_seen: iso(2 * day) },
         { id: "t-master-fresh", topic: "已掌握未到期", subject: "科目甲", source: "材料A", mastery: "mastered", correct: 8, wrong: 1, last_seen: iso(3 * day) },
         { id: "t-master-due", topic: "已掌握到期", subject: "科目乙", source: "材料B", mastery: "mastered", correct: 6, wrong: 0, last_seen: iso(8 * day) },
+        { id: "t-plain", topic: "未分科知识点", source: "材料C", mastery: "learning", correct: 1, wrong: 0, last_seen: iso(3 * 60 * 60 * 1000) },
       ],
       stats: { practiceCount: 4, questionCount: 20, answeredCount: 18, correctCount: 12 },
       sessions: [{ sessionId: "s1" }, { sessionId: "s2" }, { sessionId: "s3" }, { sessionId: "s4" }],
@@ -392,7 +472,7 @@ async function testMapWithSampleArchive() {
     const map = res.data.map;
     assert.strictEqual(map.summary.byLevel["未练"], 1);
     assert.strictEqual(map.summary.byLevel["薄弱"], 1);
-    assert.strictEqual(map.summary.byLevel["学习中"], 2);
+    assert.strictEqual(map.summary.byLevel["学习中"], 3);
     assert.strictEqual(map.summary.byLevel["掌握"], 2);
     assert.strictEqual(map.summary.practiceCount, 4);
     assert.strictEqual(map.summary.answeredCount, 18);
@@ -417,6 +497,10 @@ async function testMapWithSampleArchive() {
     assert.ok(subjects["科目乙"]);
     assert.strictEqual(subjects["科目甲"].topicCount, 3);
     assert.strictEqual(subjects["科目乙"].topicCount, 3);
+    assert.ok(subjects["未分科目"]);
+    assert.strictEqual(subjects["未分科目"].topicCount, 1);
+    assert.strictEqual(subjects["未分科目"].topics[0].id, "t-plain");
+    assert.strictEqual(subjects["未分科目"].topics[0].due, false);
     assert.strictEqual(subjects["科目甲"].pendingWrong, 2);
     assert.strictEqual(subjects["科目甲"].dueCount, 2);
     assert.strictEqual(subjects["科目乙"].dueCount, 2);
@@ -461,6 +545,144 @@ async function testNoHardcodedUserHomeAndBranding() {
   assert.ok(!home.includes("能力地图"));
 }
 
+
+async function testShouldReuse() {
+  const root = path.resolve("/tmp/exam-assistant-reuse-a");
+  const other = path.resolve("/tmp/exam-assistant-reuse-b");
+  const base = {
+    ok: true,
+    runtime: "node",
+    service: SERVICE_NAME,
+    version: SERVICE_VERSION,
+    dataDir: root,
+  };
+  assert.strictEqual(shouldReuse(base, root), true);
+  assert.strictEqual(shouldReuse({ ...base, dataDir: root + "/" }, root), true);
+  assert.strictEqual(shouldReuse({ ...base, dataDir: other }, root), false);
+  assert.strictEqual(shouldReuse({ ...base, version: "0.0.1" }, root), false);
+  assert.strictEqual(shouldReuse({ ...base, version: undefined }, root), false);
+  assert.strictEqual(shouldReuse({ ...base, service: "other" }, root), false);
+  assert.strictEqual(shouldReuse(null, root), false);
+}
+
+async function testStartScriptOverwritesAndReuses() {
+  const root = tmpDir();
+  const staleServer = "console.log('stale-server-placeholder');\n";
+  const staleHome = "<html><body>stale-home-placeholder</body></html>\n";
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, "exam-server.js"), staleServer, "utf8");
+  fs.writeFileSync(path.join(root, "home.html"), staleHome, "utf8");
+  const port = await freePort();
+  const env = {
+    ...process.env,
+    EXAM_ASSISTANT_DATA_DIR: root,
+    EXAM_ASSISTANT_PORT: String(port),
+  };
+  const child = spawn("bash", [commandPath], { env, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await waitForOutput(child, /已启动/);
+    const copiedServer = fs.readFileSync(path.join(root, "exam-server.js"), "utf8");
+    const copiedHome = fs.readFileSync(path.join(root, "home.html"), "utf8");
+    const srcServer = fs.readFileSync(serverPath, "utf8");
+    const srcHome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
+    assert.strictEqual(copiedServer, srcServer);
+    assert.strictEqual(copiedHome, srcHome);
+    assert.ok(!copiedServer.includes("stale-server-placeholder"));
+    assert.ok(!copiedHome.includes("stale-home-placeholder"));
+    const health = await request(port, "GET", "/api/health");
+    assert.strictEqual(health.status, 200);
+    assert.strictEqual(health.data.version, SERVICE_VERSION);
+    assert.strictEqual(health.data.dataDir, root);
+    assert.strictEqual(health.data.service, SERVICE_NAME);
+
+    const reuse = spawn("bash", [commandPath], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const reuseOut = await new Promise((resolve, reject) => {
+      let out = "";
+      const timer = setTimeout(() => {
+        reuse.kill("SIGTERM");
+        reject(new Error("reuse command timed out: " + out));
+      }, 5000);
+      const take = (buf) => { out += buf.toString(); };
+      reuse.stdout.on("data", take);
+      reuse.stderr.on("data", take);
+      reuse.on("exit", (code) => {
+        clearTimeout(timer);
+        resolve({ code, out });
+      });
+    });
+    assert.strictEqual(reuseOut.code, 0);
+    assert.match(reuseOut.out, /已在运行/);
+  } finally {
+    await stopChild(child);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testRestartOnDataDirMismatch() {
+  const rootA = tmpDir();
+  const rootB = tmpDir();
+  const port = await freePort();
+  const childA = spawn(process.execPath, [serverPath, "--port", String(port), "--data-dir", rootA], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let childB;
+  try {
+    await waitForOutput(childA, /已启动/);
+    const first = await request(port, "GET", "/api/health");
+    assert.strictEqual(first.data.dataDir, rootA);
+    childB = spawn(process.execPath, [serverPath, "--port", String(port), "--data-dir", rootB], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForOutput(childB, /已启动/);
+    const second = await request(port, "GET", "/api/health");
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(second.data.dataDir, rootB);
+    assert.strictEqual(second.data.version, SERVICE_VERSION);
+    const exitA = await new Promise((resolve) => {
+      if (childA.exitCode != null) {
+        resolve(childA.exitCode);
+        return;
+      }
+      const timer = setTimeout(() => resolve("timeout"), 3000);
+      childA.on("exit", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+    });
+    assert.notStrictEqual(exitA, "timeout", "old process should exit after shutdown");
+  } finally {
+    await stopChild(childB);
+    await stopChild(childA);
+    fs.rmSync(rootA, { recursive: true, force: true });
+    fs.rmSync(rootB, { recursive: true, force: true });
+  }
+}
+
+async function testShutdownEndpoint() {
+  const root = tmpDir();
+  ensureDirs(root);
+  const { server, port } = await startTestServer(root, 0);
+  try {
+    const res = await request(port, "POST", "/api/shutdown", {});
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.data.ok, true);
+    const start = Date.now();
+    let down = false;
+    while (Date.now() - start < 3000) {
+      const health = await tryConnect("127.0.0.1", port, "/api/health");
+      if (!health.ok) {
+        down = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(down, "server should close after /api/shutdown");
+  } finally {
+    try { await closeServer(server); } catch { /* already closed */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
@@ -470,6 +692,10 @@ async function main() {
     ["assignments and home", testAssignmentsAndHome],
     ["session draft/submit overwrite rules", testSessionDraftSubmitRules],
     ["reuse running server", testReuseRunningServer],
+    ["shouldReuse checks version and dataDir", testShouldReuse],
+    ["start script overwrites templates and reuses", testStartScriptOverwritesAndReuses],
+    ["restart when dataDir differs", testRestartOnDataDirMismatch],
+    ["POST /api/shutdown", testShutdownEndpoint],
     ["/api/map empty dir", testMapEmptyDir],
     ["/api/map with sample archive", testMapWithSampleArchive],
   ];
