@@ -3,11 +3,12 @@
 
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const DEFAULT_DATA_DIR = "/Users/songyanfei/.exam-assistant";
+const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
 function dataDir() {

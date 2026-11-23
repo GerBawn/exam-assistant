@@ -110,7 +110,7 @@ async function testHealthAndBind() {
     assert.strictEqual(health.data.port, port);
     assert.ok(String(health.data.homeUrl).includes("127.0.0.1"));
     assert.notStrictEqual(root, DEFAULT_DATA_DIR);
-    assert.ok(!root.startsWith("/Users/songyanfei/.exam-assistant"));
+    assert.ok(!root.startsWith(DEFAULT_DATA_DIR));
     assert.ok(!root.startsWith("/home/box/"));
 
     const external = await tryConnect("0.0.0.0", port, "/api/health");
@@ -287,7 +287,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(DEFAULT_DATA_DIR, "/Users/songyanfei/.exam-assistant");
+  assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
     assert.ok(practice.includes(`"${kind}"`) || practice.includes(`'${kind}'`) || practice.includes(`kind === "${kind}"`) || practice.includes(`"${kind}":`), `practice page should handle kind ${kind}`);
@@ -315,7 +315,7 @@ async function testAtomicWriteAndNoUserDir() {
   writeJson(target, { sessionId: "atomic", submitted: false, items: [] });
   assert.ok(fs.existsSync(target));
   assert.ok(!fs.existsSync(target + ".tmp"));
-  assert.ok(!root.includes("/Users/songyanfei/.exam-assistant"));
+  assert.ok(!root.includes(DEFAULT_DATA_DIR));
   fs.rmSync(root, { recursive: true, force: true });
 }
 

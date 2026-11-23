@@ -711,7 +711,7 @@
         }
       } catch (err) {}
       downloadRecord();
-      setSaveMsg("记录服务未开，已下载作答文件，请放到 /Users/songyanfei/.exam-assistant/sessions/", false);
+      setSaveMsg("记录服务未开，已下载作答文件，请放到 ~/.exam-assistant/sessions/", false);
       return false;
     }
     async function saveFile() {
@@ -726,7 +726,7 @@
       }
       writeLocalDraft();
       downloadRecord();
-      setSaveMsg("已下载作答记录，请放到 /Users/songyanfei/.exam-assistant/sessions/", false);
+      setSaveMsg("已下载作答记录，请放到 ~/.exam-assistant/sessions/", false);
     }
     function copyRecord() {
       const rec = record();

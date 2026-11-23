@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${EXAM_ASSISTANT_DATA_DIR:-/Users/songyanfei/.exam-assistant}"
+ROOT="${EXAM_ASSISTANT_DATA_DIR:-$HOME/.exam-assistant}"
 SCRIPT="$DIR/exam-server.js"
 if [ ! -f "$SCRIPT" ]; then
   SCRIPT="$ROOT/exam-server.js"

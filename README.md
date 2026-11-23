@@ -14,7 +14,7 @@
 
 ## 学习数据
 
-数据目录是 `/Users/songyanfei/.exam-assistant/`。下文所说的数据目录都指这里。
+数据目录是用户主目录下的 `.exam-assistant/`。下文所说的数据目录都指这里。
 
 ```
 数据目录/
