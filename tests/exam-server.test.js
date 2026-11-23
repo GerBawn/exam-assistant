@@ -683,9 +683,72 @@ async function testShutdownEndpoint() {
   }
 }
 
+function extractNamedFunction(source, name) {
+  const start = source.indexOf("function " + name + "(");
+  if (start < 0) throw new Error("missing function " + name);
+  const brace = source.indexOf("{", start);
+  let depth = 0;
+  for (let i = brace; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error("unclosed function " + name);
+}
+
+function loadPracticeFigureHelpers() {
+  const source = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
+  const code = [
+    extractNamedFunction(source, "escapeAttr"),
+    extractNamedFunction(source, "renderFigure"),
+    "return { escapeAttr, renderFigure };",
+  ].join("\n");
+  return new Function(code)();
+}
+
+async function testPracticeFigureRendering() {
+  const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
+  assert.ok(practice.includes("function renderFigure"));
+  assert.ok(practice.includes("body += renderFigure(q.figure)"));
+  assert.ok(practice.includes(".q-figure"));
+  assert.ok(practice.includes("q-figure figcaption") || practice.includes(".q-figure figcaption"));
+  const { escapeAttr, renderFigure } = loadPracticeFigureHelpers();
+
+  assert.strictEqual(renderFigure(undefined), "");
+  assert.strictEqual(renderFigure(null), "");
+  assert.strictEqual(renderFigure({}), "");
+
+  const htmlFig = renderFigure({
+    caption: "细胞结构",
+    html: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
+  });
+  assert.ok(htmlFig.startsWith('<figure class="q-figure">'));
+  assert.ok(htmlFig.includes("<circle cx=\"5\" cy=\"5\" r=\"4\" />"));
+  assert.ok(htmlFig.includes("<figcaption>细胞结构</figcaption>"));
+
+  const svgFig = renderFigure({ svg: "<svg id=\"only-svg\"></svg>" });
+  assert.ok(svgFig.includes('<figure class="q-figure"><svg id="only-svg"></svg></figure>'));
+  assert.ok(!svgFig.includes("<figcaption>"));
+
+  const src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+  const srcFig = renderFigure({
+    src,
+    alt: '流程示意',
+  });
+  assert.ok(srcFig.includes('<img src="' + escapeAttr(src) + '" alt="流程示意" />'));
+
+  const escaped = renderFigure({ src: 'data:image/png;base64,aaa" onclick=alert(1)', caption: "图注" });
+  assert.ok(escaped.includes("src=\"data:image/png;base64,aaa&quot; onclick=alert(1)\""));
+  assert.ok(escaped.includes("<figcaption>图注</figcaption>"));
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
+    ["practice page renders optional figures", testPracticeFigureRendering],
     ["atomic write uses temp dir only", testAtomicWriteAndNoUserDir],
     ["no hardcoded user home or civil-service branding", testNoHardcodedUserHomeAndBranding],
     ["health and bind address", testHealthAndBind],

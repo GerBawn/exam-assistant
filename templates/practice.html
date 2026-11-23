@@ -64,6 +64,26 @@
     .material { margin-bottom: 14px; color: #3a342c; }
     .material h2, .q h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
     .q-stem { font-size: 17px; line-height: 1.75; margin: 0 0 16px; }
+    .q-figure, .material figure {
+      margin: 0 0 16px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .q-figure svg, .q-figure img,
+    .material svg, .material img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+    }
+    .q-figure figcaption, .material figcaption {
+      margin: 10px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+    }
     .hint { color: var(--muted); font-size: 13px; margin: -8px 0 12px; }
     .opts { display: grid; gap: 8px; }
     .opt {
@@ -407,6 +427,18 @@
       return String(text)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
+    function renderFigure(figure) {
+      if (!figure) return "";
+      const captionText = figure.caption != null && figure.caption !== "" ? String(figure.caption) : "";
+      const alt = escapeAttr(figure.alt || captionText || "示意图");
+      let body = "";
+      if (figure.html) body = figure.html;
+      else if (figure.svg) body = figure.svg;
+      else if (figure.src) body = `<img src="${escapeAttr(figure.src)}" alt="${alt}" />`;
+      if (!body && !captionText) return "";
+      const caption = captionText ? `<figcaption>${captionText}</figcaption>` : "";
+      return `<figure class="q-figure">${body}${caption}</figure>`;
+    }
 
     function render() {
       const q = qs[state.i];
@@ -425,6 +457,7 @@
       const kind = kindOf(q);
       const heading = `第 ${state.i + 1} 题${q.topic ? " · " + q.topic : ""}${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`;
       let body = `<h2>${heading}</h2>`;
+      body += renderFigure(q.figure);
       if (kind === "fill" && splitFillStem(q.stem).blankCount > 0) {
         body += renderFill(q, selected);
       } else {
