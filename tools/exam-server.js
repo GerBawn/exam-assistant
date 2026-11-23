@@ -329,6 +329,230 @@ function buildHome(root) {
   };
 }
 
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MASTERY_LEVELS = {
+  new: "未练",
+  weak: "薄弱",
+  learning: "学习中",
+  mastered: "掌握",
+};
+const DUE_AFTER_MS = {
+  new: 0,
+  weak: DAY_MS,
+  learning: DAY_MS,
+  mastered: 7 * DAY_MS,
+};
+const UNGROUPED_SUBJECT = "未分科目";
+const SETTLED_WRONG = new Set([
+  "done", "resolved", "reviewed", "cleared", "mastered", "closed",
+  "已掌握", "已复习", "已消化", "已完成",
+]);
+
+function normalizeMastery(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "new" || raw === "未练") return "new";
+  if (raw === "weak" || raw === "薄弱") return "weak";
+  if (raw === "learning" || raw === "学习中" || raw === "一般") return "learning";
+  if (raw === "mastered" || raw === "掌握") return "mastered";
+  return "new";
+}
+
+function masteryLabel(mastery) {
+  return MASTERY_LEVELS[normalizeMastery(mastery)] || "未练";
+}
+
+function isTopicDue(topic, now = Date.now()) {
+  const mastery = normalizeMastery(topic && topic.mastery);
+  const lastSeen = topic && topic.last_seen;
+  if (!lastSeen || mastery === "new") return true;
+  const t = Date.parse(lastSeen);
+  if (Number.isNaN(t)) return true;
+  const wait = Object.prototype.hasOwnProperty.call(DUE_AFTER_MS, mastery) ? DUE_AFTER_MS[mastery] : DAY_MS;
+  return now - t >= wait;
+}
+
+function loadWrongItemList(root) {
+  const file = path.join(root, "wrong-items.json");
+  if (!fs.existsSync(file)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (Array.isArray(data)) {
+      return data.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+    }
+    if (data && typeof data === "object") {
+      const list = data.items || data.wrongItems || [];
+      return Array.isArray(list)
+        ? list.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+        : [];
+    }
+  } catch {
+    // skip broken wrong-items file
+  }
+  return [];
+}
+
+function isPendingWrong(item) {
+  if (!item || typeof item !== "object") return false;
+  if (item.pending === false || item.resolved === true || item.reviewed === true || item.done === true) {
+    return false;
+  }
+  if (item.pending === true) return true;
+  const status = String(item.status || item.reviewStatus || item.state || "pending").trim();
+  if (!status) return true;
+  return !SETTLED_WRONG.has(status) && !SETTLED_WRONG.has(status.toLowerCase());
+}
+
+function wrongItemTopicKeys(item) {
+  const keys = [];
+  for (const field of ["topicId", "topic_id", "knowledgeId"]) {
+    if (item[field]) keys.push(String(item[field]).trim());
+  }
+  for (const field of ["topic", "topicName", "knowledge"]) {
+    if (item[field]) keys.push(String(item[field]).trim());
+  }
+  return keys.filter(Boolean);
+}
+
+function emptyMap(updatedAt) {
+  return {
+    updatedAt: updatedAt || nowIso(),
+    summary: {
+      byLevel: { "未练": 0, "薄弱": 0, "学习中": 0, "掌握": 0 },
+      practiceCount: 0,
+      sessionCount: 0,
+      questionCount: 0,
+      answeredCount: 0,
+      correctCount: 0,
+      accuracy: null,
+      pendingWrongCount: 0,
+      dueCount: 0,
+    },
+    subjects: [],
+    topics: [],
+  };
+}
+
+function numberOr(value, fallback) {
+  if (value == null || value === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function buildMap(root, now = Date.now()) {
+  const statePath = path.join(root, "state.json");
+  if (!fs.existsSync(statePath)) return emptyMap();
+  const state = loadJson(statePath, null);
+  if (!state) return emptyMap();
+
+  const topicsIn = Array.isArray(state.topics) ? state.topics : [];
+  const stats = state.stats && typeof state.stats === "object" ? state.stats : {};
+  const pendingItems = loadWrongItemList(root).filter(isPendingWrong);
+
+  const packedTopics = topicsIn
+    .filter((topic) => topic && typeof topic === "object" && !Array.isArray(topic))
+    .map((topic) => {
+      const mastery = normalizeMastery(topic.mastery);
+      const correct = numberOr(topic.correct, 0);
+      const wrong = numberOr(topic.wrong, 0);
+      const attempts = correct + wrong;
+      return {
+        id: String(topic.id || ""),
+        topic: String(topic.topic || topic.name || ""),
+        subject: String(topic.subject || "").trim() || UNGROUPED_SUBJECT,
+        source: topic.source || "",
+        mastery,
+        level: masteryLabel(mastery),
+        correct,
+        wrong,
+        attempts,
+        accuracy: attempts ? Math.round((correct / attempts) * 1000) / 1000 : null,
+        pendingWrong: 0,
+        last_seen: topic.last_seen || "",
+        due: isTopicDue({ mastery, last_seen: topic.last_seen }, now),
+      };
+    });
+
+  for (const item of pendingItems) {
+    const keys = wrongItemTopicKeys(item);
+    const match = packedTopics.find((topic) => keys.includes(topic.id) || (topic.topic && keys.includes(topic.topic)));
+    if (match) match.pendingWrong += 1;
+  }
+
+  const byLevel = { "未练": 0, "薄弱": 0, "学习中": 0, "掌握": 0 };
+  let dueCount = 0;
+  for (const topic of packedTopics) {
+    byLevel[topic.level] = (byLevel[topic.level] || 0) + 1;
+    if (topic.due) dueCount += 1;
+  }
+
+  const subjectNames = [];
+  const seenSubject = new Set();
+  for (const topic of packedTopics) {
+    if (!seenSubject.has(topic.subject)) {
+      seenSubject.add(topic.subject);
+      subjectNames.push(topic.subject);
+    }
+  }
+  subjectNames.sort((a, b) => {
+    if (a === UNGROUPED_SUBJECT) return 1;
+    if (b === UNGROUPED_SUBJECT) return -1;
+    return a.localeCompare(b, "zh");
+  });
+
+  const subjects = subjectNames.map((name) => {
+    const list = packedTopics.filter((topic) => topic.subject === name);
+    const correct = list.reduce((sum, topic) => sum + topic.correct, 0);
+    const wrong = list.reduce((sum, topic) => sum + topic.wrong, 0);
+    const attempts = correct + wrong;
+    const levels = { "未练": 0, "薄弱": 0, "学习中": 0, "掌握": 0 };
+    let pendingWrong = 0;
+    let due = 0;
+    for (const topic of list) {
+      levels[topic.level] = (levels[topic.level] || 0) + 1;
+      pendingWrong += topic.pendingWrong;
+      if (topic.due) due += 1;
+    }
+    return {
+      name,
+      topicCount: list.length,
+      correct,
+      wrong,
+      attempts,
+      accuracy: attempts ? Math.round((correct / attempts) * 1000) / 1000 : null,
+      pendingWrong,
+      dueCount: due,
+      byLevel: levels,
+      topics: list,
+    };
+  });
+
+  const sessionCount = Array.isArray(state.sessions) ? state.sessions.length : 0;
+  const practiceCount = numberOr(stats.practiceCount, sessionCount);
+  const answeredFromTopics = packedTopics.reduce((sum, topic) => sum + topic.attempts, 0);
+  const correctFromTopics = packedTopics.reduce((sum, topic) => sum + topic.correct, 0);
+  const answeredCount = numberOr(stats.answeredCount, answeredFromTopics);
+  const correctCount = numberOr(stats.correctCount, correctFromTopics);
+  const questionCount = numberOr(stats.questionCount, answeredCount);
+
+  return {
+    updatedAt: state.updatedAt || nowIso(),
+    summary: {
+      byLevel,
+      practiceCount,
+      sessionCount,
+      questionCount,
+      answeredCount,
+      correctCount,
+      accuracy: answeredCount ? Math.round((correctCount / answeredCount) * 1000) / 1000 : null,
+      pendingWrongCount: pendingItems.length,
+      dueCount,
+    },
+    subjects,
+    topics: packedTopics,
+  };
+}
+
 function readTemplate(root) {
   const names = [
     path.join(__dirname, "..", "templates", "home.html"),
@@ -411,6 +635,10 @@ function createHandler(root, port) {
       }
       if (pathname === "/api/home") {
         sendJson(res, 200, { ok: true, home: buildHome(root) });
+        return;
+      }
+      if (pathname === "/api/map") {
+        sendJson(res, 200, { ok: true, map: buildMap(root) });
         return;
       }
       if (pathname === "/api/assignments") {
@@ -651,4 +879,9 @@ module.exports = {
   parseArgs,
   probe,
   main,
+  buildMap,
+  isTopicDue,
+  isPendingWrong,
+  normalizeMastery,
+  MASTERY_LEVELS,
 };

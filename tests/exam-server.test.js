@@ -301,8 +301,11 @@ async function testConstantsAndTemplateKinds() {
   const home = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
   assert.ok(home.includes("最近一次试卷"));
   assert.ok(home.includes("历史试卷"));
+  assert.ok(home.includes("学习地图"));
+  assert.ok(home.includes("/api/map"));
   assert.ok(!home.includes("能力地图"));
   assert.ok(!home.includes("公考"));
+  assert.ok(!home.toLowerCase().includes("gongkao"));
   const source = fs.readFileSync(serverPath, "utf8");
   assert.ok(source.includes('listen(server, args.port, "127.0.0.1")') || source.includes('listen(server, args.port, \'127.0.0.1\')'));
   assert.ok(!source.includes("17813"));
@@ -319,14 +322,156 @@ async function testAtomicWriteAndNoUserDir() {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+
+async function testMapEmptyDir() {
+  const root = tmpDir();
+  ensureDirs(root);
+  const { server, port } = await startTestServer(root, 0);
+  try {
+    const res = await request(port, "GET", "/api/map");
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.data.ok, true);
+    const map = res.data.map;
+    assert.ok(map);
+    assert.deepStrictEqual(map.topics, []);
+    assert.deepStrictEqual(map.subjects, []);
+    assert.strictEqual(map.summary.practiceCount, 0);
+    assert.strictEqual(map.summary.pendingWrongCount, 0);
+    assert.strictEqual(map.summary.dueCount, 0);
+    assert.strictEqual(map.summary.byLevel["未练"], 0);
+    assert.strictEqual(map.summary.byLevel["薄弱"], 0);
+    assert.strictEqual(map.summary.byLevel["学习中"], 0);
+    assert.strictEqual(map.summary.byLevel["掌握"], 0);
+    assert.strictEqual(map.summary.accuracy, null);
+
+    writeJson(path.join(root, "wrong-items.json"), {
+      items: [{ id: "w1", topic: "孤立错题", status: "pending" }],
+    });
+    const stillEmpty = await request(port, "GET", "/api/map");
+    assert.strictEqual(stillEmpty.data.map.topics.length, 0);
+    assert.strictEqual(stillEmpty.data.map.summary.pendingWrongCount, 0);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testMapWithSampleArchive() {
+  const root = tmpDir();
+  ensureDirs(root);
+  const { server, port } = await startTestServer(root, 0);
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const iso = (msAgo) => new Date(now - msAgo).toISOString();
+    writeJson(path.join(root, "state.json"), {
+      updatedAt: new Date(now).toISOString(),
+      topics: [
+        { id: "t-new", topic: "新概念", subject: "科目甲", source: "材料A", mastery: "new", correct: 0, wrong: 0, last_seen: "" },
+        { id: "t-weak-due", topic: "薄弱到期", subject: "科目甲", source: "材料A", mastery: "weak", correct: 1, wrong: 3, last_seen: iso(2 * day) },
+        { id: "t-learn-fresh", topic: "学习中未到期", subject: "科目乙", source: "材料B", mastery: "learning", correct: 2, wrong: 1, last_seen: iso(3 * 60 * 60 * 1000) },
+        { id: "t-learn-due", topic: "学习中到期", subject: "科目乙", source: "材料B", mastery: "learning", correct: 3, wrong: 2, last_seen: iso(2 * day) },
+        { id: "t-master-fresh", topic: "已掌握未到期", subject: "科目甲", source: "材料A", mastery: "mastered", correct: 8, wrong: 1, last_seen: iso(3 * day) },
+        { id: "t-master-due", topic: "已掌握到期", subject: "科目乙", source: "材料B", mastery: "mastered", correct: 6, wrong: 0, last_seen: iso(8 * day) },
+      ],
+      stats: { practiceCount: 4, questionCount: 20, answeredCount: 18, correctCount: 12 },
+      sessions: [{ sessionId: "s1" }, { sessionId: "s2" }, { sessionId: "s3" }, { sessionId: "s4" }],
+    });
+    writeJson(path.join(root, "wrong-items.json"), {
+      items: [
+        { id: "w1", topicId: "t-weak-due", topic: "薄弱到期", status: "pending" },
+        { id: "w2", topicId: "t-weak-due", topic: "薄弱到期", status: "待复习" },
+        { id: "w3", topicId: "t-learn-due", topic: "学习中到期", status: "已掌握" },
+        { id: "w4", topic: "未归档错题", status: "pending" },
+      ],
+    });
+
+    const res = await request(port, "GET", "/api/map");
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.data.ok, true);
+    const map = res.data.map;
+    assert.strictEqual(map.summary.byLevel["未练"], 1);
+    assert.strictEqual(map.summary.byLevel["薄弱"], 1);
+    assert.strictEqual(map.summary.byLevel["学习中"], 2);
+    assert.strictEqual(map.summary.byLevel["掌握"], 2);
+    assert.strictEqual(map.summary.practiceCount, 4);
+    assert.strictEqual(map.summary.answeredCount, 18);
+    assert.strictEqual(map.summary.correctCount, 12);
+    assert.strictEqual(map.summary.accuracy, Math.round((12 / 18) * 1000) / 1000);
+    assert.strictEqual(map.summary.pendingWrongCount, 3);
+    assert.strictEqual(map.summary.dueCount, 4);
+
+    const byId = Object.fromEntries(map.topics.map((t) => [t.id, t]));
+    assert.strictEqual(byId["t-new"].due, true);
+    assert.strictEqual(byId["t-new"].level, "未练");
+    assert.strictEqual(byId["t-weak-due"].due, true);
+    assert.strictEqual(byId["t-weak-due"].pendingWrong, 2);
+    assert.strictEqual(byId["t-learn-fresh"].due, false);
+    assert.strictEqual(byId["t-learn-due"].due, true);
+    assert.strictEqual(byId["t-learn-due"].pendingWrong, 0);
+    assert.strictEqual(byId["t-master-fresh"].due, false);
+    assert.strictEqual(byId["t-master-due"].due, true);
+
+    const subjects = Object.fromEntries(map.subjects.map((s) => [s.name, s]));
+    assert.ok(subjects["科目甲"]);
+    assert.ok(subjects["科目乙"]);
+    assert.strictEqual(subjects["科目甲"].topicCount, 3);
+    assert.strictEqual(subjects["科目乙"].topicCount, 3);
+    assert.strictEqual(subjects["科目甲"].pendingWrong, 2);
+    assert.strictEqual(subjects["科目甲"].dueCount, 2);
+    assert.strictEqual(subjects["科目乙"].dueCount, 2);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function collectRepoFiles(dir) {
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (name === ".git") continue;
+    const full = path.join(dir, name);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) out.push(...collectRepoFiles(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function isProbablyText(file) {
+  const ext = path.extname(file).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz"].includes(ext)) return false;
+  return true;
+}
+
+async function testNoHardcodedUserHomeAndBranding() {
+  const repoRoot = path.resolve(__dirname, "..");
+  for (const file of collectRepoFiles(repoRoot)) {
+    if (!isProbablyText(file)) continue;
+    const text = fs.readFileSync(file, "utf8");
+    const forbiddenHome = ["/Users", "songyanfei"].join("/");
+    assert.ok(!text.includes(forbiddenHome), "hardcoded home path in " + path.relative(repoRoot, file));
+    if (file.endsWith("home.html") || file.endsWith("practice.html") || file.endsWith("exam-server.js")) {
+      assert.ok(!text.includes("公考"), "civil-service branding in " + path.relative(repoRoot, file));
+      assert.ok(!text.toLowerCase().includes("gongkao"), "gongkao branding in " + path.relative(repoRoot, file));
+    }
+  }
+  const home = fs.readFileSync(path.join(repoRoot, "templates", "home.html"), "utf8");
+  assert.ok(home.includes("学习地图"));
+  assert.ok(!home.includes("能力地图"));
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
     ["atomic write uses temp dir only", testAtomicWriteAndNoUserDir],
+    ["no hardcoded user home or civil-service branding", testNoHardcodedUserHomeAndBranding],
     ["health and bind address", testHealthAndBind],
     ["assignments and home", testAssignmentsAndHome],
     ["session draft/submit overwrite rules", testSessionDraftSubmitRules],
     ["reuse running server", testReuseRunningServer],
+    ["/api/map empty dir", testMapEmptyDir],
+    ["/api/map with sample archive", testMapWithSampleArchive],
   ];
   let failed = 0;
   for (const [name, fn] of tests) {

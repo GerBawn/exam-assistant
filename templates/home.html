@@ -19,6 +19,8 @@
       --bad-soft: #f8eaea;
       --mid: #8a5a12;
       --mid-soft: #f6eedf;
+      --idle: #8a857c;
+      --idle-soft: #eeebe6;
       --shadow: 0 1px 2px rgba(31, 27, 22, .06), 0 8px 24px rgba(31, 27, 22, .05);
       --radius: 14px;
     }
@@ -48,6 +50,34 @@
     .status.done { background: var(--ok-soft); color: var(--ok); }
     .status.open { background: var(--mid-soft); color: var(--mid); }
     .empty { color: var(--muted); }
+    .legend { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+    .legend .label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+    .tag { border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+    .tag .count { font-weight: 650; margin-left: 4px; }
+    .lv-未练 { background: var(--idle-soft); color: var(--idle); }
+    .lv-薄弱 { background: var(--bad-soft); color: var(--bad); }
+    .lv-学习中 { background: var(--mid-soft); color: var(--mid); }
+    .lv-掌握 { background: var(--ok-soft); color: var(--ok); }
+    .score { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+    @media (max-width: 720px) { .score { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .stat { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
+    .stat .n { font-size: 24px; font-weight: 650; }
+    .stat .l { font-size: 12px; color: var(--muted); }
+    .stat.good .n { color: var(--ok); }
+    .stat.bad .n { color: var(--bad); }
+    .stat.mid .n { color: var(--mid); }
+    .overview { display: grid; grid-template-columns: 280px 1fr; gap: 16px; margin-bottom: 16px; align-items: stretch; }
+    @media (max-width: 860px) { .overview { grid-template-columns: 1fr; } }
+    .radar-wrap { display: flex; justify-content: center; }
+    .radar-wrap svg { width: 100%; max-width: 280px; height: auto; }
+    .table-wrap { overflow-x: auto; }
+    table.cat { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cat th, table.cat td { padding: 8px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    table.cat th:first-child, table.cat td:first-child, table.cat td.left { text-align: left; white-space: normal; }
+    table.cat th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .mod-h { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 10px; }
+    .mod-h h2 { margin: 0; }
+    .mod-h .sub { color: var(--muted); font-size: 13px; }
     html, body { height: 100%; }
     .chrome { position: sticky; top: 0; z-index: 40; background: var(--bg); flex-shrink: 0; padding-bottom: 2px; }
     body.exam-on { overflow: hidden; }
@@ -71,12 +101,17 @@
       <nav class="tabs" id="tabs">
         <button type="button" data-tab="latest" class="active">最近一次试卷</button>
         <button type="button" data-tab="papers">历史试卷</button>
+        <button type="button" data-tab="map">学习地图</button>
       </nav>
     </header>
     <section class="panel active" id="panel-latest"></section>
     <section class="panel" id="panel-papers"></section>
+    <section class="panel" id="panel-map"></section>
   </div>
   <script>
+    const TABS = ["latest", "papers", "map"];
+    const LEVELS = ["未练", "薄弱", "学习中", "掌握"];
+
     function $(id) { return document.getElementById(id); }
     function escapeHtml(text) {
       return String(text || "")
@@ -98,13 +133,25 @@
       if (row.accuracy == null) return "已交卷";
       return Math.round(row.accuracy * 100) + "% · 对 " + (row.correct || 0);
     }
-    function showTab(name) {
-      const tab = name === "papers" ? "papers" : "latest";
+    function pct(value) {
+      if (value == null || Number.isNaN(Number(value))) return "—";
+      return Math.round(Number(value) * 100) + "%";
+    }
+    function subjectScore(subject) {
+      const lv = subject.byLevel || {};
+      const total = LEVELS.reduce((sum, name) => sum + (lv[name] || 0), 0);
+      if (!total) return 0;
+      return ((lv["薄弱"] || 0) * 0.25 + (lv["学习中"] || 0) * 0.6 + (lv["掌握"] || 0) * 1) / total;
+    }
+    function showTab(name, opts) {
+      const tab = TABS.includes(name) ? name : "latest";
       document.querySelectorAll(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
       $("panel-latest").classList.toggle("active", tab === "latest");
       $("panel-papers").classList.toggle("active", tab === "papers");
+      $("panel-map").classList.toggle("active", tab === "map");
       document.body.classList.toggle("exam-on", tab === "latest" && !!document.querySelector("#panel-latest .exam-frame"));
       if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
+      if (tab === "map" && (!opts || opts.refresh !== false)) loadMap();
     }
     function paperCard(row, withOpen) {
       const href = pageHref(row.page);
@@ -150,6 +197,115 @@
       }
       $("panel-papers").innerHTML = papers.map(row => paperCard(row, true)).join("");
     }
+    function radarHtml(subjects) {
+      const named = (subjects || []).filter((s) => s && s.name !== "未分科目");
+      if (named.length < 2 || named.length > 8) return "";
+      const n = named.length;
+      const cx = 140, cy = 140, r = 88;
+      function polar(radius, i) {
+        const a = -Math.PI / 2 + (i * 2 * Math.PI / n);
+        return [cx + radius * Math.cos(a), cy + radius * Math.sin(a)];
+      }
+      const rings = [0.25, 0.5, 0.75, 1].map((g) => {
+        const pts = named.map((_, i) => polar(r * g, i).join(",")).join(" ");
+        return `<polygon points="${pts}" fill="none" stroke="#e6e0d6" stroke-width="1"></polygon>`;
+      }).join("");
+      const axes = named.map((_, i) => {
+        const [x, y] = polar(r, i);
+        return `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#e6e0d6" stroke-width="1"></line>`;
+      }).join("");
+      const dataPts = named.map((s, i) => polar(r * subjectScore(s), i).join(",")).join(" ");
+      const labels = named.map((s, i) => {
+        const [x, y] = polar(r + 18, i);
+        return `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#1f1b16">${escapeHtml(s.name)}</text>`;
+      }).join("");
+      return `<div class="overview">
+        <section class="card">
+          <h2>科目掌握</h2>
+          <p class="meta" style="margin-top:-6px;">越靠外掌握越多；中心是未练。</p>
+          <div class="radar-wrap">
+            <svg viewBox="0 0 280 280" role="img" aria-label="科目掌握雷达">
+              ${rings}${axes}
+              <polygon points="${dataPts}" fill="rgba(45,74,110,.18)" stroke="#2d4a6e" stroke-width="2"></polygon>
+              ${labels}
+            </svg>
+          </div>
+        </section>
+        <section class="card">
+          <h2>科目一览</h2>
+          <div class="table-wrap">
+            <table class="cat">
+              <thead><tr><th>科目</th><th>知识点</th><th>作答</th><th>对</th><th>错</th><th>正确率</th><th>待复习</th><th>到期</th></tr></thead>
+              <tbody>
+                ${named.concat((subjects || []).filter((s) => s.name === "未分科目")).map((s) =>
+                  `<tr>
+                    <td class="left">${escapeHtml(s.name)}</td>
+                    <td>${s.topicCount || 0}</td>
+                    <td>${s.attempts || 0}</td>
+                    <td>${s.correct || 0}</td>
+                    <td>${s.wrong || 0}</td>
+                    <td>${pct(s.accuracy)}</td>
+                    <td>${s.pendingWrong || 0}</td>
+                    <td>${s.dueCount || 0}</td>
+                  </tr>`
+                ).join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>`;
+    }
+    function topicTable(topics) {
+      return `<div class="table-wrap"><table class="cat">
+        <thead><tr><th>知识点</th><th>作答</th><th>对</th><th>错</th><th>正确率</th><th>待复习</th><th>到期</th><th>掌握</th></tr></thead>
+        <tbody>
+          ${(topics || []).map((t) => `
+            <tr>
+              <td class="left">${escapeHtml(t.topic || t.id || "未命名知识点")}</td>
+              <td>${t.attempts || 0}</td>
+              <td>${t.correct || 0}</td>
+              <td>${t.wrong || 0}</td>
+              <td>${pct(t.accuracy)}</td>
+              <td>${t.pendingWrong || 0}</td>
+              <td>${t.due ? `<span class="status open">到期</span>` : `<span class="status done">未到期</span>`}</td>
+              <td><span class="tag lv-${escapeHtml(t.level || "未练")}">${escapeHtml(t.level || "未练")}</span></td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>`;
+    }
+    function renderMap(map) {
+      const panel = $("panel-map");
+      const topics = (map && map.topics) || [];
+      const summary = (map && map.summary) || {};
+      const byLevel = summary.byLevel || {};
+      const subjects = (map && map.subjects) || [];
+      if (!topics.length) {
+        panel.innerHTML = `<div class="card"><p class="empty">还没有学习档案。提供材料开始练习后，掌握情况会出现在这里。</p></div>`;
+        return;
+      }
+      const legend = `<div class="legend">
+        <span class="label">掌握情况</span>
+        ${LEVELS.map((lv) => `<span class="tag lv-${lv}">${lv}<span class="count">${byLevel[lv] || 0}</span></span>`).join("")}
+      </div>`;
+      const stats = [
+        ["练习场次", summary.practiceCount || 0, ""],
+        ["正确率", pct(summary.accuracy), "good"],
+        ["待复习错题", summary.pendingWrongCount || 0, summary.pendingWrongCount ? "bad" : ""],
+        ["今日到期", summary.dueCount || 0, summary.dueCount ? "mid" : ""],
+      ].map(([label, n, cls]) => `<div class="stat ${cls}"><div class="n">${n}</div><div class="l">${label}</div></div>`).join("");
+      const namedSubjects = subjects.filter((s) => s.name !== "未分科目");
+      const showGroups = namedSubjects.length >= 1 && subjects.length >= 1 && !(subjects.length === 1 && subjects[0].name === "未分科目");
+      const tables = showGroups
+        ? subjects.map((s) => `<section class="card">
+            <div class="mod-h">
+              <h2>${escapeHtml(s.name)}</h2>
+              <div class="sub">${s.topicCount || 0} 个知识点 · 作答 ${s.attempts || 0} · 正确率 ${pct(s.accuracy)} · 到期 ${s.dueCount || 0}</div>
+            </div>
+            ${topicTable(s.topics)}
+          </section>`).join("")
+        : `<section class="card"><h2>知识点</h2>${topicTable(topics)}</section>`;
+      panel.innerHTML = legend + `<div class="score">${stats}</div>` + radarHtml(subjects) + tables;
+    }
     function openExam(href) {
       const panel = $("panel-latest");
       let frame = panel.querySelector(".exam-frame");
@@ -159,7 +315,16 @@
         const next = new URL(href, location.origin).href;
         if (frame.src !== next) frame.src = href;
       }
-      showTab("latest");
+      showTab("latest", { refresh: false });
+    }
+    async function loadMap() {
+      try {
+        const mapRes = await fetch("/api/map");
+        const mapBody = await mapRes.json();
+        renderMap(mapBody.map || {});
+      } catch (err) {
+        $("panel-map").innerHTML = `<div class="card"><p class="empty">读取学习地图失败，请确认本机记录服务已启动。</p></div>`;
+      }
     }
     document.getElementById("tabs").addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-tab]");
