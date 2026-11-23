@@ -23,7 +23,7 @@
 
 ```
 数据目录/
-├── state.json          # 科目、知识点、掌握度与统计
+├── state.json          # 科目、材料索引、知识点、掌握度与统计
 ├── wrong-items.json    # 错题
 ├── sessions/           # 每次练习记录
 ├── pages/              # 交互练习页
