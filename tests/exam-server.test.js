@@ -235,6 +235,66 @@ async function testAssignmentsAndHome() {
     assert.strictEqual(home.data.home.papers.length, 1);
     assert.strictEqual(home.data.home.latest.sessionId, payload.sessionId);
     assert.strictEqual(home.data.home.latest.submitted, false);
+    const legacyHtml = "<!doctype html><title>旧试卷</title>";
+    fs.writeFileSync(path.join(root, "pages", payload.page), legacyHtml, "utf8");
+    const legacy = await request(port, "GET", "/pages/" + encodeURIComponent(payload.page));
+    assert.strictEqual(legacy.status, 200);
+    assert.strictEqual(legacy.data, legacyHtml);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testStructuredPaper() {
+  const root = tmpDir();
+  ensureDirs(root);
+  const { server, port } = await startTestServer(root, 0);
+  try {
+    const paper = {
+      schemaVersion: 1,
+      sessionId: "structured-1",
+      title: "结构化练习",
+      mode: "wrong",
+      durationMinutes: 0,
+      materials: [{ id: "m1", html: "<p>原材料</p>" }],
+      questions: [{
+        id: "q1", topicId: "t1", wrongItemId: "w1", kind: "choice",
+        materialId: "m1", stem: "从材料选出正解", options: ["选项一", "选项二"], answer: "B",
+        analysis: "按原样保留字符串 </script> 和 $&",
+      }],
+    };
+    const created = await request(port, "POST", "/api/assignments", paper);
+    assert.strictEqual(created.status, 200);
+    const { file, assignment } = created.data;
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, file), "utf8")), assignment);
+    assert.deepStrictEqual(fs.readdirSync(path.join(root, "pages")), []);
+    assert.strictEqual(assignment.questionCount, 1);
+    assert.strictEqual(assignment.page, "/practice/structured-1");
+
+    const home = await request(port, "GET", "/api/home");
+    assert.strictEqual(home.data.home.latest.page, assignment.page);
+    const rendered = await request(port, "GET", assignment.page);
+    assert.strictEqual(rendered.status, 200);
+    const embedded = rendered.data.match(/<script type="application\/json" id="exam-data">([^<]*)<\/script>/);
+    assert.ok(embedded, "trial data must stay within its JSON element");
+    assert.deepStrictEqual(JSON.parse(embedded[1]), assignment);
+
+    const repeated = await request(port, "POST", "/api/assignments", paper);
+    assert.strictEqual(repeated.data.file, file);
+    const changed = await request(port, "POST", "/api/assignments", { ...paper, questions: [{ ...paper.questions[0], answer: "A" }] });
+    assert.strictEqual(changed.status, 400);
+
+    const item = { id: "q1", topicId: "t1", wrongItemId: "w1", userAnswer: "A", correct: false };
+    const submitted = await request(port, "POST", "/api/sessions", { sessionId: paper.sessionId, items: [item], submitted: true });
+    assert.strictEqual(submitted.status, 200);
+    const session = await request(port, "GET", "/api/sessions/" + paper.sessionId);
+    const original = await request(port, "GET", "/api/assignments/" + session.data.session.sessionId);
+    const question = original.data.assignment.questions.find(q => q.id === session.data.session.items[0].id);
+    assert.strictEqual(question.options[0], "选项一");
+    assert.strictEqual(question.answer, "B");
+    assert.strictEqual(question.topicId, item.topicId);
+    assert.strictEqual(question.wrongItemId, item.wrongItemId);
   } finally {
     await closeServer(server);
     fs.rmSync(root, { recursive: true, force: true });
@@ -354,7 +414,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.1.1");
+  assert.strictEqual(SERVICE_VERSION, "1.2.0");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -608,10 +668,12 @@ async function testStartScriptOverwritesAndReuses() {
     await waitForOutput(child, /已启动/);
     const copiedServer = fs.readFileSync(path.join(root, "exam-server.js"), "utf8");
     const copiedHome = fs.readFileSync(path.join(root, "home.html"), "utf8");
+    const copiedPractice = fs.readFileSync(path.join(root, "practice.html"), "utf8");
     const srcServer = fs.readFileSync(serverPath, "utf8");
     const srcHome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
     assert.strictEqual(copiedServer, srcServer);
     assert.strictEqual(copiedHome, srcHome);
+    assert.strictEqual(copiedPractice, fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8"));
     assert.ok(!copiedServer.includes("stale-server-placeholder"));
     assert.ok(!copiedHome.includes("stale-home-placeholder"));
     const health = await request(port, "GET", "/api/health");
@@ -770,14 +832,35 @@ async function testPracticeFigureRendering() {
   assert.ok(escaped.includes("<figcaption>图注</figcaption>"));
 }
 
+async function testChoiceReviewDistinguishesSelections() {
+  const source = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
+  const renderChoice = new Function("state", "splitLetters", "correctKeys", "hasAnswer", "letter", "optionText",
+    extractNamedFunction(source, "renderChoice") + "\nreturn renderChoice;");
+  const state = { submitted: true };
+  const render = renderChoice(state, value => String(value || "").split(",").filter(Boolean),
+    () => ["A", "B", "D"], value => Boolean(value),
+    i => String.fromCharCode(65 + i), value => value);
+  const question = { answer: "A,B,D", options: ["一", "二", "三", "四"] };
+  const partial = render(question, "A,C", true);
+  assert.match(partial, /data-key="A"[^>]*>.*?选对/);
+  assert.match(partial, /data-key="B"[^>]*>.*?漏选/);
+  assert.match(partial, /data-key="C"[^>]*>.*?错选/);
+  assert.match(partial, /data-key="D"[^>]*>.*?漏选/);
+  const blank = render(question, "", true);
+  assert.match(blank, /data-key="A"[^>]*>.*?正确选项/);
+  assert.doesNotMatch(blank, /漏选|错选|选对/);
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
     ["practice page renders optional figures", testPracticeFigureRendering],
+    ["choice review identifies selected, missed and blank answers", testChoiceReviewDistinguishesSelections],
     ["atomic write uses temp dir only", testAtomicWriteAndNoUserDir],
     ["no hardcoded user home or civil-service branding", testNoHardcodedUserHomeAndBranding],
     ["health and bind address", testHealthAndBind],
     ["assignments and home", testAssignmentsAndHome],
+    ["structured paper renders and joins to a submitted attempt", testStructuredPaper],
     ["session draft/submit overwrite rules", testSessionDraftSubmitRules],
     ["reuse running server", testReuseRunningServer],
     ["shouldReuse checks version and dataDir", testShouldReuse],

@@ -5,11 +5,12 @@ const http = require("http");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { isDeepStrictEqual } = require("util");
 const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.1.1";
+const SERVICE_VERSION = "1.2.0";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -232,7 +233,7 @@ function validateAssignment(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("记录必须是 JSON 对象");
   }
-  return {
+  const record = {
     ...payload,
     id: payload.id || payload.sessionId || "paper",
     sessionId: payload.sessionId || payload.id || "paper",
@@ -240,6 +241,45 @@ function validateAssignment(payload) {
     createdAt: payload.createdAt || nowIso(),
     status: payload.status || "assigned",
   };
+  if (record.schemaVersion !== 1) return record;
+
+  const sessionId = payload.sessionId ?? payload.id;
+  if (typeof sessionId !== "string" || !/^[\p{L}\p{N}_-]{1,64}$/u.test(sessionId)) {
+    throw new Error("试卷 ID 须由 1–64 个字母、数字、下划线或连字符组成");
+  }
+  if (!Array.isArray(record.questions) || !record.questions.length) {
+    throw new Error("试卷缺少题目");
+  }
+  const questionIds = new Set();
+  for (const question of record.questions) {
+    if (typeof question?.id !== "string" || !question.id.trim() || questionIds.has(question.id)) {
+      throw new Error("每题须有唯一的题目 ID");
+    }
+    questionIds.add(question.id);
+  }
+  if (record.materials != null && !Array.isArray(record.materials)) {
+    throw new Error("materials 必须是数组");
+  }
+  record.id = record.sessionId = sessionId;
+  record.questionCount = record.questions.length;
+  record.page = "/practice/" + encodeURIComponent(sessionId);
+  return record;
+}
+
+function saveAssignment(root, payload) {
+  const record = validateAssignment(payload);
+  const existingPath = findAssignmentPath(root, record.sessionId);
+  const existing = existingPath && loadJson(existingPath, null);
+  if (existing && (existing.schemaVersion === 1 || record.schemaVersion === 1)) {
+    record.createdAt = existing.createdAt;
+    if (!isDeepStrictEqual(record, existing)) {
+      throw new Error("该试卷 ID 已布置，请用新的 ID 布置新版试卷");
+    }
+    return { file: "assignments/" + path.basename(existingPath), assignment: existing };
+  }
+  const filename = existingPath ? path.basename(existingPath) : assignmentFilename(record);
+  writeJson(path.join(root, "assignments", filename), record);
+  return { file: "assignments/" + filename, assignment: record };
 }
 
 function validateRecord(payload) {
@@ -552,20 +592,26 @@ function buildMap(root, now = Date.now()) {
   };
 }
 
-function readTemplate(root) {
+function readTemplate(root, name) {
   const names = [
-    path.join(__dirname, "..", "templates", "home.html"),
-    path.join(__dirname, "templates", "home.html"),
-    path.join(__dirname, "home.html"),
-    path.join(root, "home.html"),
+    path.join(__dirname, "..", "templates", name),
+    path.join(__dirname, "templates", name),
+    path.join(__dirname, name),
+    path.join(root, name),
   ];
   for (const file of names) {
     if (fs.existsSync(file) && fs.statSync(file).isFile()) {
       return fs.readFileSync(file, "utf8");
     }
   }
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>考试助手</title></head>
-<body><p>未找到 home.html 模板。请把 templates/home.html 复制到记录目录后重新启动服务。</p></body></html>`;
+  return null;
+}
+
+function renderPractice(template, assignment) {
+  const marker = '<script type="application/json" id="exam-data">{}</script>';
+  if (!template.includes(marker)) throw new Error("练习页模板缺少试卷数据位置");
+  const data = JSON.stringify(assignment).replace(/</g, "\\u003c");
+  return template.replace(marker, () => `<script type="application/json" id="exam-data">${data}</script>`);
 }
 
 function sendJson(res, code, payload) {
@@ -617,7 +663,8 @@ function createHandler(root, port, controls) {
 
     if (req.method === "GET") {
       if (pathname === "/" || pathname === "/index.html" || pathname === "/home" || pathname === "/home.html") {
-        sendBytes(res, 200, readTemplate(root), "text/html; charset=utf-8");
+        const home = readTemplate(root, "home.html");
+        sendBytes(res, 200, home || '<!DOCTYPE html><meta charset="UTF-8"><p>请把 templates/home.html 复制到记录目录。</p>', "text/html; charset=utf-8");
         return;
       }
       if (pathname === "/api/health") {
@@ -649,6 +696,28 @@ function createHandler(root, port, controls) {
             ...row.data,
           })),
         });
+        return;
+      }
+      const assignmentMatch = pathname.match(/^\/(api\/assignments|practice)\/([^/]+)$/);
+      if (assignmentMatch) {
+        const [, route, id] = assignmentMatch;
+        const file = findAssignmentPath(root, id);
+        const assignment = file && loadJson(file, null);
+        if (!assignment || (route === "practice" && assignment.schemaVersion !== 1)) {
+          sendJson(res, 404, { ok: false, error: "未找到该试卷" });
+          return;
+        }
+        if (route === "api/assignments") {
+          sendJson(res, 200, { ok: true, assignment });
+          return;
+        }
+        try {
+          const template = readTemplate(root, "practice.html");
+          if (!template) throw new Error("请把 templates/practice.html 复制到记录目录");
+          sendBytes(res, 200, renderPractice(template, assignment), "text/html; charset=utf-8");
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
         return;
       }
       if (pathname === "/api/sessions") {
@@ -737,12 +806,7 @@ function createHandler(root, port, controls) {
             return;
           }
           if (pathname === "/api/assignments") {
-            const record = validateAssignment(payload);
-            const existingPath = findAssignmentPath(root, record.sessionId);
-            const filename = existingPath ? path.basename(existingPath) : assignmentFilename(record);
-            const filePath = existingPath || path.join(root, "assignments", filename);
-            writeJson(filePath, record);
-            sendJson(res, 200, { ok: true, file: "assignments/" + filename, assignment: record });
+            sendJson(res, 200, { ok: true, ...saveAssignment(root, payload) });
             return;
           }
         } catch (err) {
@@ -1004,6 +1068,8 @@ module.exports = {
   applyStartedAt,
   validateRecord,
   validateAssignment,
+  saveAssignment,
+  renderPractice,
   writeJson,
   loadSessionById,
   isSubmitted,

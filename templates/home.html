@@ -126,6 +126,7 @@
     function pageHref(page) {
       if (!page) return "";
       if (/^https?:\/\//i.test(page)) return page;
+      if (page.startsWith("/practice/")) return page;
       return page.startsWith("/pages/") ? page : "/pages/" + page.replace(/^pages\//, "");
     }
     function modeLabel(mode) {

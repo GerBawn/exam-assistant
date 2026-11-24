@@ -1,6 +1,6 @@
 ---
 name: 考试助手
-description: 在用户提供学习材料或点名一个主题出题、按新知练习、错题复习、定期复习或综合练习出题、查看学习地图或掌握情况、或需要学习总结报告时使用。四种练习方式和按指定范围出题都生成交互 HTML 练习页，并由助手在用户电脑启动本机记录服务；总结报告和纯讲解只用文字。根据材料自行判断题型，记录已学内容与错题。学习档案在用户主目录下的 `.exam-assistant/`。
+description: 在用户提供学习材料或点名一个主题出题、按新知练习、错题复习、定期复习或综合练习出题、查看学习地图或掌握情况、或需要学习总结报告时使用。练习由本机记录服务用共享模板和试卷 JSON 渲染。总结报告和纯讲解用文字。根据材料自行判断题型，记录已学内容与错题。学习档案在用户主目录下的 `.exam-assistant/`。
 ---
 # 考试助手
 
@@ -15,17 +15,18 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 ├── state.json            # 科目、材料索引、知识点、掌握度、统计、已回写的场次
 ├── wrong-items.json      # 错题
 ├── sessions/             # 每次练习的原始作答（含草稿与已交卷）
-├── pages/                # 生成过的练习页
-├── assignments/          # 已布置的试卷索引
+├── pages/                # 历史独立 HTML 试卷
+├── assignments/          # 已布置的试卷 JSON，含题目、材料、答案与解析
 ├── reports/              # 可选的报告文件
 ├── exam-server.js        # 由助手复制到此目录的本机记录服务
-└── home.html             # 由助手复制到此目录的首页（含学习地图）
+├── home.html             # 首页（含学习地图）
+└── practice.html         # 共享练习页模板
 ```
 
 - `state.json`：科目、材料索引、知识点、掌握度、统计，以及已经用于更新档案的 `sessionId` 列表。
 - `wrong-items.json`：题干、用户答案、正确要点、材料依据、时间、知识点、复盘状态。标准字段见「档案格式」。
 - `sessions/`：每次练习的独立记录，文件名形如 `exam-session-{sessionId}.json`。
-- `pages/`、`assignments/`：练习页副本和出题索引，供本机首页展示「最近一次试卷」和「历史试卷」。
+- `assignments/`：一卷一份 JSON，以 `sessionId` 定位试卷，以 `questions[].id` 对应同场作答的 `items[].id`，以 `topicId` 跨卷关联到知识点和复习状态。历史卷的布置记录可能只有索引，对应页面仍可从 `pages/` 打开。
 
 材料索引写在 `state.json` 的 `sources` 里，是各份已收录材料的单一记录。每条至少含稳定 `id`、标题 `title`、地址 `address`、收录时间 `addedAt`，并用 `kind` 标明类型：`file` 为本地文件，`url` 为链接，`paste` 为对话粘贴。地址是以后能回到这份材料的位置。
 
@@ -35,7 +36,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 已有同一地址的材料，或对话粘贴且标题已对应同一份材料时，复用该 `id`，需要时补全标题或地址。只把这些定位信息写入档案，材料全文仍留在原地址或原对话里。尚无 `sources` 时先写成空列表，随收录再追加。
 
-每轮先读档案；目录或文件尚不存在时再初始化。出题时写入练习页、布置记录和待答状态。本机服务把作答写入 `sessions/`；交卷后由助手按「收回作答并更新档案」更新 `state.json` 与 `wrong-items.json`。
+每轮先读档案；目录或文件尚不存在时再初始化。出题时保存试卷 JSON，由服务渲染练习页。本机服务把作答写入 `sessions/`；交卷后由助手按「收回作答并更新档案」更新 `state.json` 与 `wrong-items.json`。
 
 每个知识点至少含 `id`、`topic`、`sourceId`、`source`、`excerpt`、`mastery`（new / learning / weak / mastered）、`correct`、`wrong`、`streak`、`last_seen`。有科目时写入 `subject`，学习地图按科目分组展示；没有科目时，地图归入「未分科目」。`source` 写章节或小节这类便于阅读的来源标注，`excerpt` 保留短摘录；`sourceId` 指向 `sources` 里对应材料。用户问这些知识来自哪里时，用该材料的地址和这条 `source` 标注来说明。
 
@@ -66,7 +67,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 用户要继续一份已收录材料、但档案里还没有该部分的知识点时，若地址仍可打开，就据此补提取再出题；地址为空或打不开，请用户再提供该材料。
 
-写题一律按「如何出题」。四种方式和按指定范围出题，都按「如何生成 HTML 练习页」出页并启动本机记录服务，`mode` 用该方式约定的取值；用户说做完后，按「收回作答并更新档案」批改并更新档案。总结报告和纯讲解（只讲概念）使用文字。
+写题一律按「如何出题」。按「如何布置试卷」启动本机服务并保存试卷，`mode` 用该方式约定的取值；用户说做完后，按「收回作答并更新档案」批改并更新档案。总结报告和纯讲解使用文字。
 
 ## 新知练习
 
@@ -152,31 +153,37 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 出练习页前，由助手在用户电脑启动服务。首页是 `http://127.0.0.1:17922/`，包含「最近一次试卷」「历史试卷」和「学习地图」。学习地图在首页的一个标签里，打开 `http://127.0.0.1:17922/#map` 会直接进入该标签。
 
 1. 若数据目录不存在，创建它以及其中的 `sessions/`、`pages/`、`assignments/`、`reports/`。
-2. 每次启动都把即将使用的 `tools/exam-server.js` 覆盖复制为数据目录下的 `exam-server.js`，把 `templates/home.html` 覆盖复制为数据目录下的 `home.html`。只复制文件不会更新已经在跑的进程。可附带 `tools/start-exam-server.command` 作备用；该脚本也会先覆盖复制再启动或复用。
+2. 每次启动都复制同一版本的 `tools/exam-server.js`、`templates/home.html` 和 `templates/practice.html` 到数据目录。首页和练习页模板在请求时读取，更新服务代码则需重启。也可用 `tools/start-exam-server.command` 完成复制和启动。
 3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。同时满足以下条件时，复用该进程：`ok` 为 true，`service` 为 `exam-assistant`，`dataDir` 与本次数据目录相同，`version` 与即将启动的那份 `exam-server.js` 里的 `SERVICE_VERSION` 一致（也出现在 health 的 `version` 字段）。可用 `node -e "console.log(require('./exam-server.js').SERVICE_VERSION)"` 在即将启动的那份文件上读取版本。
 4. 若尚未启动，或版本不一致，或 `dataDir` 不同：若端口上已是本服务，先停掉再启动。在本机后台运行：`node 数据目录/exam-server.js --data-dir 数据目录`。脚本在版本和数据目录都一致时会提示已在运行并退出；不一致时会先停掉旧进程再启动。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
-5. 请用户打开首页 `http://127.0.0.1:17922/`；练习页地址是 `http://127.0.0.1:17922/pages/文件名.html`。需要打开学习地图时，使用 `http://127.0.0.1:17922/#map`。需要时可用系统命令帮用户打开。
-6. 若启动失败，说明原因，并使用「服务未开时交卷自动下载 JSON」。
+5. 请用户打开首页 `http://127.0.0.1:17922/`；学习地图在 `/#map`。
 
 测试本服务时，使用 `--data-dir` 或环境变量 `EXAM_ASSISTANT_DATA_DIR`，指向临时目录。
 
-## 如何生成 HTML 练习页
+## 如何布置试卷
 
-`templates/practice.html` 同样优先使用这份 `SKILL.md` 旁边的文件，否则从 https://github.com/GerBawn/exam-assistant 获取。
+1. 启动本机记录服务，按下方格式组卷。给试卷分配新的 `sessionId`，每道题分配卷内唯一的 `id`。
+2. 把完整 JSON POST 到 `http://127.0.0.1:17922/api/assignments`。服务将题目与布置信息写入同一份 JSON，从题目数派生 `questionCount`，并返回 `assignment.page`。已布置的题目供原场次回看，改题时用新场次 ID 布置。
+3. 确认返回的页面可打开，再把该链接交给用户。普通练习提示「做完点交卷」，限时卷说明时限和到时自动交卷。交卷后可看解析，再回到对话批改。
 
-1. 先启动本机记录服务。
-2. 复制 `templates/practice.html`，沿用模板内的样式和脚本。
-3. 把 `window.EXAM_SESSION = ...` 整段替换为本场题目数据，把 `<title>{{TITLE}}</title>` 换成试卷标题。需要时设置 `window.EXAM_API = "http://127.0.0.1:17922"`。按下方约定选择 `durationMinutes`，在题目数据和布置记录里写同一个值。
-4. 文件名用可读名称，例如 `2026-11-22-材料练习.html`。
-5. 把 HTML 写到数据目录的 `pages/`。
-6. 立即 POST `http://127.0.0.1:17922/api/assignments`，字段至少包括 `sessionId`、`title`、`questionCount`、`page`（练习页文件名）、`mode`、`durationMinutes`、`source`，首页的「最近一次试卷」随即出现。
-7. 请用户打开 `http://127.0.0.1:17922/`。普通练习提示「做完点交卷」，限时卷说明时限和到时自动交卷。交卷后可看解析，再回到对话批改。
+如果服务启动失败且本机可运行 Node，用以下方式把试卷 JSON 布置到同一个数据目录，并临时导出页面供离线作答。已打开的练习页遇到服务断线时，仍可下载交卷 JSON。
+
+```bash
+node -e '
+  const fs = require("node:fs");
+  const [server, root, template, input, output] = process.argv.slice(1);
+  const { saveAssignment, renderPractice } = require(server);
+  const { assignment } = saveAssignment(root, JSON.parse(fs.readFileSync(input, "utf8")));
+  fs.writeFileSync(output, renderPractice(fs.readFileSync(template, "utf8"), assignment), "utf8");
+' "/绝对路径/tools/exam-server.js" "/数据目录" "/绝对路径/templates/practice.html" "/临时目录/试卷.json" "/临时目录/试卷.html"
+```
 
 ### 题目数据格式
 
 ```json
 {
-  "id": "2026-11-22-material-01",
+  "schemaVersion": 1,
+  "sessionId": "2026-11-22-material-01",
   "title": "材料练习",
   "mode": "new",
   "source": "用户材料第 2 节",
@@ -226,10 +233,10 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 - 点选项或填写作答；单选可用键盘 A–D 或数字键，左右方向键切题
 - 题号导航、标记、上一题 / 下一题、用时显示；限时卷倒计时，到时自动交卷
-- 交卷后显示客观题正确率，并展开解析或评分要点
+- 交卷后显示客观题正确率，并展开解析或评分要点。客观题在题干下并排显示用户答案和参考答案；未答题显示「未作答」。选择题逐项标明「选对」「错选」「漏选」，整题未答时标明「正确选项」。回看时使用已保存的用户作答。
 - 作答过程中会把草稿 POST 到 `/api/sessions`（`submitted: false`），交卷时再 POST 同一 `sessionId`（`submitted: true`）。服务覆盖同一场次文件，保留原始 `startedAt`。仅在该场仍为未交卷时写入草稿；已交卷记录保持为最终作答。刷新或从首页再次打开同一份练习页时，会读回当时的作答；已交卷则进入回看，沿用当时用时。服务未开时草稿保存在浏览器 localStorage，交卷则自动下载 JSON。服务不在线且页面为独立打开时，显示「手动保存」和「复制作答记录」。
 
-页面沿用模板风格：浅纸色背景、深墨字、克制的蓝灰强调色，简洁易读。
+页面沿用模板风格：浅灰绿背景、白色题卡和深绿色强调，桌面端题号导航在左侧，窄屏时移到题目上方。
 
 ## 收回作答并更新档案
 
@@ -238,6 +245,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 1. 读取这场 `exam-session-*.json`。先读数据目录的 `sessions/`（可用 `GET http://127.0.0.1:17922/api/sessions/{sessionId}` 或直接读文件）；若没有，再看下载文件夹，或对话里粘贴的 JSON。
 2. 确认 `submitted` 为 `true` 后再批改。若仍是草稿，告诉用户记录还没交卷。
 3. 若该文件还在下载目录，把它放到 `sessions/`。
+   需要还原题目、选项、材料或参考答案时，用 `sessionId` 读取 `GET /api/assignments/{sessionId}` 或对应的布置 JSON，再按 `items[].id` 与 `questions[].id` 关联。历史卷缺少题目 JSON 时，使用已保存作答里的题目快照。定期复习按 `topicId` 查相关知识点的掌握度和到期时间。
 4. 先重新读取最新的 `state.json` 和 `wrong-items.json`。若 `state.json` 的 `sessions` 里已经有这个 `sessionId`，根据已有记录给出反馈，保持现有计数和错题列表。
 5. 若尚未回写：追加本场摘要；按知识点累加 `correct` / `wrong` / `streak`，并按「学习档案」里的掌握度规则更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错或部分对的题；「部分对」计入 `wrong`，不计入 `correct`。客观题以记录里的 `correct` 为起点，必要时复核；主观题依据 `scoring` 评分后再写入对、错或部分对，意思对即可。
 6. 更新 `wrong-items.json`。首次答错或部分对的题建一条 `pending` 记录，保存稳定 `id`、`sessionId`、`questionId`、`topicId`、`topic`、题干、实际作答和评分依据。复盘题按 `wrongItemId` 更新原条目，全对则改为 `已掌握`，答错或部分对仍为 `pending`，保留错误作答供下次出题；空白跳过。只改这道原错题。对旧卷，知识点名称与来源能唯一对应时可补认 `topicId`；复盘题缺少 `wrongItemId` 时，只有试卷来源或原题记录能唯一确认对应错题，才更新其状态。同名或仅同一考点不足以确认关联。
