@@ -10,7 +10,7 @@ const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.3.0";
+const SERVICE_VERSION = "1.4.0";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
