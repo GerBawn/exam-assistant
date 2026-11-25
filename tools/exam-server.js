@@ -10,7 +10,7 @@ const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.2.0";
+const SERVICE_VERSION = "1.2.1";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -469,6 +469,7 @@ function emptyMap(updatedAt) {
       dueCount: 0,
     },
     subjects: [],
+    clusters: [],
     topics: [],
   };
 }
@@ -501,6 +502,7 @@ function buildMap(root, now = Date.now()) {
         topic: String(topic.topic || topic.name || ""),
         subject: String(topic.subject || "").trim() || UNGROUPED_SUBJECT,
         source: topic.source || "",
+        clusterId: String(topic.clusterId || "").trim(),
         mastery,
         level: masteryLabel(mastery),
         correct,
@@ -588,8 +590,68 @@ function buildMap(root, now = Date.now()) {
       dueCount,
     },
     subjects,
+    clusters: packClusters(state.clusters, packedTopics),
     topics: packedTopics,
   };
+}
+
+function packClusters(clustersIn, packedTopics) {
+  const input = Array.isArray(clustersIn) ? clustersIn : [];
+  const topicsById = new Map();
+  for (const topic of packedTopics) {
+    if (topic.id) topicsById.set(topic.id, topic);
+  }
+  const packed = [];
+  const seen = new Set();
+  for (const cluster of input) {
+    if (!cluster || typeof cluster !== "object" || Array.isArray(cluster)) continue;
+    const id = String(cluster.id || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const idSet = new Set();
+    const ids = [];
+    const rawIds = Array.isArray(cluster.topicIds) ? cluster.topicIds : [];
+    for (const raw of rawIds) {
+      const tid = String(raw || "").trim();
+      if (!tid || idSet.has(tid)) continue;
+      idSet.add(tid);
+      ids.push(tid);
+    }
+    for (const topic of packedTopics) {
+      if (topic.clusterId === id && !idSet.has(topic.id)) {
+        idSet.add(topic.id);
+        ids.push(topic.id);
+      }
+    }
+    const list = ids.map((tid) => topicsById.get(tid)).filter(Boolean);
+    const correct = list.reduce((sum, topic) => sum + topic.correct, 0);
+    const wrong = list.reduce((sum, topic) => sum + topic.wrong, 0);
+    const attempts = correct + wrong;
+    const levels = { "未练": 0, "薄弱": 0, "学习中": 0, "掌握": 0 };
+    let pendingWrong = 0;
+    let due = 0;
+    for (const topic of list) {
+      levels[topic.level] = (levels[topic.level] || 0) + 1;
+      pendingWrong += topic.pendingWrong;
+      if (topic.due) due += 1;
+    }
+    packed.push({
+      id,
+      name: String(cluster.name || "").trim() || id,
+      subject: String(cluster.subject || "").trim(),
+      summary: String(cluster.summary || "").trim(),
+      topicCount: list.length,
+      correct,
+      wrong,
+      attempts,
+      accuracy: attempts ? Math.round((correct / attempts) * 1000) / 1000 : null,
+      pendingWrong,
+      dueCount: due,
+      byLevel: levels,
+      topics: list,
+    });
+  }
+  return packed;
 }
 
 function readTemplate(root, name) {

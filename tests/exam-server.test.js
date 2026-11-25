@@ -414,7 +414,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.2.0");
+  assert.strictEqual(SERVICE_VERSION, "1.2.1");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -476,6 +476,7 @@ async function testMapEmptyDir() {
     assert.ok(map);
     assert.deepStrictEqual(map.topics, []);
     assert.deepStrictEqual(map.subjects, []);
+    assert.deepStrictEqual(map.clusters, []);
     assert.strictEqual(map.summary.practiceCount, 0);
     assert.strictEqual(map.summary.pendingWrongCount, 0);
     assert.strictEqual(map.summary.dueCount, 0);
@@ -566,8 +567,55 @@ async function testMapWithSampleArchive() {
     assert.strictEqual(subjects["科目甲"].pendingWrong, 2);
     assert.strictEqual(subjects["科目甲"].dueCount, 2);
     assert.strictEqual(subjects["科目乙"].dueCount, 2);
+    assert.deepStrictEqual(map.clusters, []);
   } finally {
     await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function testMapClusters() {
+  const root = tmpDir();
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const iso = (msAgo) => new Date(now - msAgo).toISOString();
+    writeJson(path.join(root, "state.json"), {
+      clusters: [
+        { id: "c-policy", name: "货币政策", subject: "宏观", summary: "利率、通胀与政策工具如何连在一起。", topicIds: ["t-rate", "t-inflation"] },
+        { id: "c-policy", name: "重复应忽略", topicIds: ["t-rate"] },
+        { name: "没有 id 应忽略", topicIds: ["t-rate"] },
+      ],
+      topics: [
+        { id: "t-rate", topic: "政策利率", subject: "宏观", clusterId: "c-policy", mastery: "weak", correct: 1, wrong: 2, last_seen: iso(2 * day) },
+        { id: "t-inflation", topic: "通胀口径", subject: "宏观", mastery: "learning", correct: 2, wrong: 0, last_seen: iso(3 * 60 * 60 * 1000) },
+        { id: "t-qe", topic: "量化宽松", subject: "宏观", clusterId: "c-policy", mastery: "new", correct: 0, wrong: 0, last_seen: "" },
+        { id: "t-loose", topic: "零散点", subject: "宏观", mastery: "learning", correct: 1, wrong: 0, last_seen: iso(3 * 60 * 60 * 1000) },
+      ],
+    });
+    writeJson(path.join(root, "wrong-items.json"), {
+      items: [{ id: "w1", topicId: "t-rate", status: "pending" }],
+    });
+    const map = buildMap(root, now);
+    assert.strictEqual(map.clusters.length, 1);
+    const cluster = map.clusters[0];
+    assert.strictEqual(cluster.id, "c-policy");
+    assert.strictEqual(cluster.name, "货币政策");
+    assert.strictEqual(cluster.subject, "宏观");
+    assert.strictEqual(cluster.summary, "利率、通胀与政策工具如何连在一起。");
+    assert.strictEqual(cluster.topicCount, 3);
+    assert.deepStrictEqual(cluster.topics.map((t) => t.id), ["t-rate", "t-inflation", "t-qe"]);
+    assert.strictEqual(cluster.dueCount, 2);
+    assert.strictEqual(cluster.pendingWrong, 1);
+    assert.strictEqual(cluster.byLevel["薄弱"], 1);
+    assert.strictEqual(cluster.byLevel["学习中"], 1);
+    assert.strictEqual(cluster.byLevel["未练"], 1);
+    assert.strictEqual(map.topics.find((t) => t.id === "t-qe").clusterId, "c-policy");
+    assert.strictEqual(map.topics.find((t) => t.id === "t-loose").clusterId, "");
+    assert.ok(!cluster.topics.some((t) => t.id === "t-loose"));
+    assert.strictEqual(map.subjects.length, 1);
+    assert.strictEqual(map.subjects[0].topicCount, 4);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -869,6 +917,7 @@ async function main() {
     ["POST /api/shutdown", testShutdownEndpoint],
     ["/api/map empty dir", testMapEmptyDir],
     ["/api/map with sample archive", testMapWithSampleArchive],
+    ["/api/map clusters", testMapClusters],
     ["wrong items match by stable ID or unique legacy name", testWrongItemTopicIds],
   ];
   let failed = 0;

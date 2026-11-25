@@ -313,7 +313,28 @@
             ${topicTable(s.topics)}
           </section>`).join("")
         : `<section class="card"><h2>知识点</h2>${topicTable(topics)}</section>`;
-      panel.innerHTML = legend + `<div class="score">${stats}</div>` + radarHtml(subjects) + tables;
+      const clusters = (map && map.clusters) || [];
+      const clusterCard = clusters.length
+        ? `<section class="card">
+            <div class="mod-h"><h2>知识类</h2><div class="sub">${clusters.length} 类</div></div>
+            <div class="table-wrap"><table class="cat">
+              <thead><tr><th>类</th><th>科目</th><th>知识点</th><th>到期</th><th>待复习</th><th>薄弱</th><th>正确率</th></tr></thead>
+              <tbody>
+                ${clusters.map((c) => `
+                  <tr>
+                    <td class="left">${escapeHtml(c.name || c.id || "未命名")}${c.summary ? `<div class="paper-sub">${escapeHtml(c.summary)}</div>` : ""}</td>
+                    <td class="left">${escapeHtml(c.subject || "")}</td>
+                    <td>${c.topicCount || 0}</td>
+                    <td>${c.dueCount || 0}</td>
+                    <td>${c.pendingWrong || 0}</td>
+                    <td>${(c.byLevel && c.byLevel["薄弱"]) || 0}</td>
+                    <td>${pct(c.accuracy)}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table></div>
+          </section>`
+        : "";
+      panel.innerHTML = legend + `<div class="score">${stats}</div>` + radarHtml(subjects) + clusterCard + tables;
     }
     function openExam(href) {
       const panel = $("panel-latest");
