@@ -16,7 +16,7 @@ fi
 mkdir -p "$ROOT/sessions" "$ROOT/pages" "$ROOT/assignments" "$ROOT/reports"
 ROOT="$(cd "$ROOT" && pwd)"
 
-for template in home.html practice.html; do
+for template in home.html practice.html app-chrome.inc.html; do
   if [ -f "$DIR/../templates/$template" ]; then
     source="$(cd "$DIR/../templates" && pwd)/$template"
   elif [ -f "$DIR/templates/$template" ]; then

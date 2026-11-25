@@ -20,8 +20,9 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 ├── assignments/          # 已布置的试卷 JSON，含题目、材料、答案与解析
 ├── reports/              # 可选的报告文件
 ├── exam-server.js        # 由助手复制到此目录的本机记录服务
-├── home.html             # 首页（含学习地图）
-└── practice.html         # 共享练习页模板
+├── home.html             # 首页壳
+├── practice.html         # 共享练习页模板
+└── app-chrome.inc.html   # 各页共用的顶栏导航
 ```
 
 - `state.json`：科目、材料索引、知识类、知识点、掌握度、统计，以及已经用于更新档案的 `sessionId` 列表。
@@ -172,15 +173,15 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 练习页是本地 HTML，浏览器通过本机服务写入档案目录。`tools/exam-server.js` 是一个绑定 `127.0.0.1:17922` 的小服务（Node 标准库，无额外依赖）。需要本机已安装 Node.js。
 
-这些文件的来源是仓库 https://github.com/GerBawn/exam-assistant 。若 `tools/` 与 `templates/` 就在这份 `SKILL.md` 旁边，直接用旁边的文件；否则从该仓库取同样的 `tools/exam-server.js` 和 `templates/home.html`、`templates/practice.html`。
+这些文件的来源是仓库 https://github.com/GerBawn/exam-assistant 。若 `tools/` 与 `templates/` 就在这份 `SKILL.md` 旁边，直接用旁边的文件；否则从该仓库取同样的 `tools/exam-server.js` 和 `templates/home.html`、`templates/practice.html`、`templates/app-chrome.inc.html`。
 
-出练习页前，由助手在用户电脑启动服务。首页是 `http://127.0.0.1:17922/`，包含「最近一次试卷」「历史试卷」和「学习地图」。学习地图在首页的一个标签里，打开 `http://127.0.0.1:17922/#map` 会直接进入该标签。
+出练习页前，由助手在用户电脑启动服务。产品只有一个入口：`http://127.0.0.1:17922/`。顶栏始终是「最近一次试卷」「历史试卷」「学习地图」；`/practice/{场次ID}` 与旧版 `/pages/...` 打开后也是同一套导航，可从试卷页直接切到历史试卷或学习地图。学习地图在 `/#map`。
 
 1. 若数据目录不存在，创建它以及其中的 `sessions/`、`pages/`、`assignments/`、`reports/`。
-2. 每次启动都复制同一版本的 `tools/exam-server.js`、`templates/home.html` 和 `templates/practice.html` 到数据目录。首页和练习页模板在请求时读取，更新服务代码则需重启。也可用 `tools/start-exam-server.command` 完成复制和启动。
+2. 每次启动都复制同一版本的 `tools/exam-server.js`、`templates/home.html`、`templates/practice.html` 和 `templates/app-chrome.inc.html` 到数据目录。首页和练习页模板在请求时读取并套上共用顶栏，更新服务代码则需重启。也可用 `tools/start-exam-server.command` 完成复制和启动。
 3. 检查：`curl -sS --max-time 1 http://127.0.0.1:17922/api/health`。同时满足以下条件时，复用该进程：`ok` 为 true，`service` 为 `exam-assistant`，`dataDir` 与本次数据目录相同，`version` 与即将启动的那份 `exam-server.js` 里的 `SERVICE_VERSION` 一致（也出现在 health 的 `version` 字段）。可用 `node -e "console.log(require('./exam-server.js').SERVICE_VERSION)"` 在即将启动的那份文件上读取版本。
 4. 若尚未启动，或版本不一致，或 `dataDir` 不同：若端口上已是本服务，先停掉再启动。在本机后台运行：`node 数据目录/exam-server.js --data-dir 数据目录`。脚本在版本和数据目录都一致时会提示已在运行并退出；不一致时会先停掉旧进程再启动。若端口被其他程序占用，先停掉再启动。启动后再确认 health。若没有 Node，按系统帮用户安装后再启动。
-5. 请用户打开首页 `http://127.0.0.1:17922/`；学习地图在 `/#map`。
+5. 请用户打开入口 `http://127.0.0.1:17922/`（或试卷链接；两者是同一套导航）。学习地图在 `/#map`。
 
 测试本服务时，使用 `--data-dir` 或环境变量 `EXAM_ASSISTANT_DATA_DIR`，指向临时目录。
 
@@ -188,7 +189,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 1. 启动本机记录服务，按下方格式组卷。给试卷分配新的 `sessionId`，每道题分配卷内唯一的 `id`。布置前先按「如何出题」里的「布置前自检」过一遍，未通过则改题后再布置。
 2. 把完整 JSON POST 到 `http://127.0.0.1:17922/api/assignments`。服务将题目与布置信息写入同一份 JSON，从题目数派生 `questionCount`，并返回 `assignment.page`。已布置的题目供原场次回看，改题时用新场次 ID 布置。
-3. 确认返回的页面可打开，再把该链接交给用户。普通练习提示「做完点交卷」，限时卷说明时限和到时自动交卷。交卷后可看解析，再回到对话批改。
+3. 确认返回的页面可打开，再把该链接交给用户。试卷链接与首页是同一应用：打开后顶栏可切换「最近一次试卷」「历史试卷」「学习地图」。普通练习提示「做完点交卷」，限时卷说明时限和到时自动交卷。交卷后可看解析，再回到对话批改。
 
 如果服务启动失败且本机可运行 Node，用以下方式把试卷 JSON 布置到同一个数据目录，并临时导出页面供离线作答。已打开的练习页遇到服务断线时，仍可下载交卷 JSON。
 

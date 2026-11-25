@@ -10,7 +10,7 @@ const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.2.1";
+const SERVICE_VERSION = "1.3.0";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -669,11 +669,53 @@ function readTemplate(root, name) {
   return null;
 }
 
-function renderPractice(template, assignment) {
+const APP_CHROME_MARKER = "{{APP_CHROME}}";
+const APP_CHROME_TABS = ["latest", "papers", "map"];
+
+function loadAppChrome(root) {
+  return readTemplate(root, "app-chrome.inc.html") || "";
+}
+
+function applyAppChrome(html, root, { active = "latest" } = {}) {
+  if (!html) return html;
+  let chrome = loadAppChrome(root);
+  if (!chrome) {
+    return html.includes(APP_CHROME_MARKER) ? html.split(APP_CHROME_MARKER).join("") : html;
+  }
+  const tab = APP_CHROME_TABS.includes(active) ? active : "latest";
+  for (const name of APP_CHROME_TABS) {
+    chrome = chrome.split(`{{ACTIVE_${name}}}`).join(name === tab ? "active" : "");
+  }
+  if (html.includes(APP_CHROME_MARKER)) {
+    return html.split(APP_CHROME_MARKER).join(chrome);
+  }
+  return html;
+}
+
+function injectAppChrome(html, root, opts) {
+  if (!html) return html;
+  if (html.includes('id="app-chrome"') || html.includes(APP_CHROME_MARKER)) {
+    return applyAppChrome(html, root, opts);
+  }
+  if (/<body[^>]*>/i.test(html)) {
+    return applyAppChrome(html.replace(/<body[^>]*>/i, (m) => m + "\n" + APP_CHROME_MARKER + "\n"), root, opts);
+  }
+  return applyAppChrome(APP_CHROME_MARKER + "\n" + html, root, opts);
+}
+
+function wantsEmbed(req, url) {
+  if (url.searchParams.get("embed") === "1") return true;
+  const dest = String((req && req.headers && req.headers["sec-fetch-dest"]) || "").toLowerCase();
+  return dest === "iframe";
+}
+
+function renderPractice(template, assignment, root, opts = {}) {
   const marker = '<script type="application/json" id="exam-data">{}</script>';
   if (!template.includes(marker)) throw new Error("练习页模板缺少试卷数据位置");
   const data = JSON.stringify(assignment).replace(/</g, "\\u003c");
-  return template.replace(marker, () => `<script type="application/json" id="exam-data">${data}</script>`);
+  let html = template.replace(marker, () => `<script type="application/json" id="exam-data">${data}</script>`);
+  html = applyAppChrome(html, root || path.join(__dirname), { active: (opts && opts.active) || "latest" });
+  return html;
 }
 
 function sendJson(res, code, payload) {
@@ -725,7 +767,8 @@ function createHandler(root, port, controls) {
 
     if (req.method === "GET") {
       if (pathname === "/" || pathname === "/index.html" || pathname === "/home" || pathname === "/home.html") {
-        const home = readTemplate(root, "home.html");
+        const raw = readTemplate(root, "home.html");
+        const home = raw ? applyAppChrome(raw, root, { active: "latest" }) : null;
         sendBytes(res, 200, home || '<!DOCTYPE html><meta charset="UTF-8"><p>请把 templates/home.html 复制到记录目录。</p>', "text/html; charset=utf-8");
         return;
       }
@@ -776,7 +819,8 @@ function createHandler(root, port, controls) {
         try {
           const template = readTemplate(root, "practice.html");
           if (!template) throw new Error("请把 templates/practice.html 复制到记录目录");
-          sendBytes(res, 200, renderPractice(template, assignment), "text/html; charset=utf-8");
+          const html = renderPractice(template, assignment, root, { active: "latest" });
+          sendBytes(res, 200, html, "text/html; charset=utf-8");
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
         }
@@ -815,8 +859,15 @@ function createHandler(root, port, controls) {
           return;
         }
         const ext = path.extname(target).toLowerCase();
-        const ctype = ext === ".html" || ext === ".htm" ? "text/html; charset=utf-8" : "application/octet-stream";
-        sendBytes(res, 200, fs.readFileSync(target), ctype);
+        if (ext === ".html" || ext === ".htm") {
+          let html = fs.readFileSync(target, "utf8");
+          if (!wantsEmbed(req, url)) {
+            html = injectAppChrome(html, root, { active: "latest" });
+          }
+          sendBytes(res, 200, html, "text/html; charset=utf-8");
+          return;
+        }
+        sendBytes(res, 200, fs.readFileSync(target), "application/octet-stream");
         return;
       }
       sendJson(res, 404, { ok: false, error: "未找到接口" });
@@ -1132,6 +1183,9 @@ module.exports = {
   validateAssignment,
   saveAssignment,
   renderPractice,
+  applyAppChrome,
+  injectAppChrome,
+  wantsEmbed,
   writeJson,
   loadSessionById,
   isSubmitted,

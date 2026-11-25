@@ -28,7 +28,7 @@
     }
     button, input, textarea { font: inherit; }
     button { cursor: pointer; }
-    .app { max-width: 920px; margin: 0 auto; padding: 24px 20px 120px; }
+    .app { max-width: 980px; margin: 0 auto; padding: 24px 20px 120px; }
     header.top {
       display: flex; align-items: flex-start; justify-content: space-between;
       gap: 16px; margin-bottom: 20px;
@@ -207,6 +207,7 @@
     .dock { background: rgba(241, 243, 240, .96); }
     .dock-inner { max-width: 1088px; }
     html.embedded .app { padding: 12px 12px 150px; }
+    html.embedded #app-chrome { display: none !important; }
     @media (max-width: 720px) {
       .app { padding: 18px 16px 180px; }
       header.top { flex-wrap: wrap; }
@@ -223,10 +224,18 @@
       .dock { padding: 8px; }
     }
   </style>
-  <script>if (window.self !== window.top) document.documentElement.classList.add("embedded");</script>
+  <script>
+    (function () {
+      const params = new URLSearchParams(location.search);
+      if (window.self !== window.top || params.get("embed") === "1") {
+        document.documentElement.classList.add("embedded");
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
+    {{APP_CHROME}}
     <header class="top">
       <div class="title">
         <h1 id="title">练习</h1>

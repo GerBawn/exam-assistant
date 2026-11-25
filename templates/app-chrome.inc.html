@@ -1,0 +1,24 @@
+<style id="app-chrome-style">
+  .chrome { position: sticky; top: 0; z-index: 40; background: var(--bg, #f6f3ee); flex-shrink: 0; padding-bottom: 2px; }
+  .chrome h1 { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
+  .chrome .meta { color: var(--muted, #6b645b); font-size: 13px; margin-bottom: 16px; }
+  .chrome .meta:empty { display: none; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 18px; }
+  .tabs a {
+    border: 1px solid var(--line, #e6e0d6); background: var(--paper, #fffcf7); border-radius: 999px;
+    padding: 7px 14px; color: var(--ink, #1f1b16); cursor: pointer; font: inherit;
+    text-decoration: none;
+  }
+  .tabs a:hover { text-decoration: none; }
+  .tabs a.active { background: var(--accent, #2d4a6e); border-color: var(--accent, #2d4a6e); color: #fff; }
+  html.embedded #app-chrome { display: none !important; }
+</style>
+<header class="chrome" id="app-chrome">
+  <h1>考试助手</h1>
+  <div class="meta" id="chrome-meta"></div>
+  <nav class="tabs" id="tabs" aria-label="主导航">
+    <a href="/#latest" data-tab="latest" class="{{ACTIVE_latest}}">最近一次试卷</a>
+    <a href="/#papers" data-tab="papers" class="{{ACTIVE_papers}}">历史试卷</a>
+    <a href="/#map" data-tab="map" class="{{ACTIVE_map}}">学习地图</a>
+  </nav>
+</header>

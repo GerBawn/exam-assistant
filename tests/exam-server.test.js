@@ -239,7 +239,12 @@ async function testAssignmentsAndHome() {
     fs.writeFileSync(path.join(root, "pages", payload.page), legacyHtml, "utf8");
     const legacy = await request(port, "GET", "/pages/" + encodeURIComponent(payload.page));
     assert.strictEqual(legacy.status, 200);
-    assert.strictEqual(legacy.data, legacyHtml);
+    assert.ok(String(legacy.data).includes("学习地图"));
+    assert.ok(String(legacy.data).includes("旧试卷"));
+    assert.ok(String(legacy.data).includes('id="app-chrome"'));
+    const legacyEmbed = await request(port, "GET", "/pages/" + encodeURIComponent(payload.page) + "?embed=1");
+    assert.strictEqual(legacyEmbed.status, 200);
+    assert.strictEqual(legacyEmbed.data, legacyHtml);
   } finally {
     await closeServer(server);
     fs.rmSync(root, { recursive: true, force: true });
@@ -276,6 +281,10 @@ async function testStructuredPaper() {
     assert.strictEqual(home.data.home.latest.page, assignment.page);
     const rendered = await request(port, "GET", assignment.page);
     assert.strictEqual(rendered.status, 200);
+    assert.ok(String(rendered.data).includes("学习地图"));
+    assert.ok(String(rendered.data).includes('id="app-chrome"'));
+    assert.ok(String(rendered.data).includes('href="/#papers"'));
+    assert.ok(String(rendered.data).includes('href="/#map"'));
     const embedded = rendered.data.match(/<script type="application\/json" id="exam-data">([^<]*)<\/script>/);
     assert.ok(embedded, "trial data must stay within its JSON element");
     assert.deepStrictEqual(JSON.parse(embedded[1]), assignment);
@@ -414,7 +423,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.2.1");
+  assert.strictEqual(SERVICE_VERSION, "1.3.0");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -427,9 +436,16 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(practice.includes("submit()"));
   assert.ok(practice.includes("left <= 0"));
   const home = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
-  assert.ok(home.includes("最近一次试卷"));
-  assert.ok(home.includes("历史试卷"));
-  assert.ok(home.includes("学习地图"));
+  const chrome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "app-chrome.inc.html"), "utf8");
+  assert.ok(home.includes("{{APP_CHROME}}"));
+  assert.ok(practice.includes("{{APP_CHROME}}"));
+  assert.ok(chrome.includes("最近一次试卷"));
+  assert.ok(chrome.includes("历史试卷"));
+  assert.ok(chrome.includes("学习地图"));
+  assert.ok(chrome.includes('href="/#latest"'));
+  assert.ok(chrome.includes('href="/#papers"'));
+  assert.ok(chrome.includes('href="/#map"'));
+  assert.ok(home.includes("embedHref"));
   assert.ok(home.includes("/api/map"));
   assert.ok(home.includes("function modeLabel"));
   assert.ok(home.includes("新知练习"));
@@ -668,14 +684,17 @@ async function testNoHardcodedUserHomeAndBranding() {
     const text = fs.readFileSync(file, "utf8");
     const forbiddenHome = ["/Users", "songyanfei"].join("/");
     assert.ok(!text.includes(forbiddenHome), "hardcoded home path in " + path.relative(repoRoot, file));
-    if (file.endsWith("home.html") || file.endsWith("practice.html") || file.endsWith("exam-server.js")) {
+    if (file.endsWith("home.html") || file.endsWith("practice.html") || file.endsWith("app-chrome.inc.html") || file.endsWith("exam-server.js")) {
       assert.ok(!text.includes("公考"), "civil-service branding in " + path.relative(repoRoot, file));
       assert.ok(!text.toLowerCase().includes("gongkao"), "gongkao branding in " + path.relative(repoRoot, file));
     }
   }
   const home = fs.readFileSync(path.join(repoRoot, "templates", "home.html"), "utf8");
-  assert.ok(home.includes("学习地图"));
+  const chromeInc = fs.readFileSync(path.join(repoRoot, "templates", "app-chrome.inc.html"), "utf8");
+  assert.ok(home.includes("{{APP_CHROME}}"));
+  assert.ok(chromeInc.includes("学习地图"));
   assert.ok(!home.includes("能力地图"));
+  assert.ok(!chromeInc.includes("能力地图"));
 }
 
 
@@ -717,11 +736,13 @@ async function testStartScriptOverwritesAndReuses() {
     const copiedServer = fs.readFileSync(path.join(root, "exam-server.js"), "utf8");
     const copiedHome = fs.readFileSync(path.join(root, "home.html"), "utf8");
     const copiedPractice = fs.readFileSync(path.join(root, "practice.html"), "utf8");
+    const copiedChrome = fs.readFileSync(path.join(root, "app-chrome.inc.html"), "utf8");
     const srcServer = fs.readFileSync(serverPath, "utf8");
     const srcHome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
     assert.strictEqual(copiedServer, srcServer);
     assert.strictEqual(copiedHome, srcHome);
     assert.strictEqual(copiedPractice, fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8"));
+    assert.strictEqual(copiedChrome, fs.readFileSync(path.resolve(__dirname, "..", "templates", "app-chrome.inc.html"), "utf8"));
     assert.ok(!copiedServer.includes("stale-server-placeholder"));
     assert.ok(!copiedHome.includes("stale-home-placeholder"));
     const health = await request(port, "GET", "/api/health");
