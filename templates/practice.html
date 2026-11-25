@@ -645,7 +645,7 @@
 
       const selected = state.answers[q.id];
       const kind = kindOf(q);
-      const heading = `第 ${state.i + 1} 题${q.topic ? " · " + q.topic : ""}${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`;
+      const heading = `第 ${state.i + 1} 题${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`;
       let body = `<h2>${heading}</h2>`;
       body += renderFigure(q.figure);
       const hasReference = q.answer != null && q.answer !== "" && (!Array.isArray(q.answer) || q.answer.length > 0);
