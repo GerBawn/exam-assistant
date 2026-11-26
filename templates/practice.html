@@ -131,6 +131,8 @@
     }
     .nav button.ok { background: var(--ok-soft); border-color: #bbf7d0; color: var(--ok); }
     .nav button.bad { background: var(--bad-soft); border-color: #fecaca; color: var(--bad); }
+    .nav button.partial { background: var(--mid-soft); border-color: #fde68a; color: var(--warn); }
+    .comparison-result.mid { color: var(--warn); }
     .q-foot {
       display: flex;
       justify-content: space-between;
@@ -400,6 +402,8 @@
       i: 0,
       answers: Object.create(null),
       flags: Object.create(null),
+      grades: Object.create(null),
+      gradingSource: null,
       startedAt: Date.now(),
       usedSeconds: 0,
       ticking: true,
@@ -512,6 +516,39 @@
       if (durationMinutes) bits.push("限时 " + durationMinutes + " 分钟");
       return bits.filter(Boolean).join(" · ");
     }
+    function resultFor(q, userAnswer) {
+      const g = state.grades[q.id];
+      if (g && Object.prototype.hasOwnProperty.call(g, "correct")) return g.correct;
+      if (state.submitted && hasAnswer(userAnswer) && isObjective(kindOf(q))) return grade(q, userAnswer);
+      return null;
+    }
+    function isPartial(q) {
+      const g = state.grades[q.id];
+      return !!(g && g.partial);
+    }
+    function summarizeItems(items) {
+      const scored = items.filter(x => x.correct !== null);
+      const right = scored.filter(x => x.correct).length;
+      const by = (key) => {
+        const map = {};
+        scored.forEach(it => {
+          const k = it[key] || "未分类";
+          map[k] = map[k] || { total: 0, correct: 0 };
+          map[k].total += 1;
+          if (it.correct) map[k].correct += 1;
+        });
+        return map;
+      };
+      return {
+        total: items.length,
+        scored: scored.length,
+        correct: right,
+        unanswered: items.filter(x => !hasAnswer(x.userAnswer)).length,
+        accuracy: scored.length ? Math.round(right / scored.length * 1000) / 1000 : null,
+        byTopic: by("topic"),
+        byKind: by("kind")
+      };
+    }
     function correctKeys(q) {
       const kind = kindOf(q);
       if (kind === "choice") return [String(q.answer || "").trim().toUpperCase()].filter(Boolean);
@@ -522,17 +559,17 @@
     function renderNav() {
       $("nav").innerHTML = qs.map((q, i) => {
         const ans = state.answers[q.id];
-        const result = state.submitted && hasAnswer(ans) && isObjective(kindOf(q)) && q.answer != null && q.answer !== ""
-          ? grade(q, ans)
-          : null;
+        const partial = state.submitted && isPartial(q);
+        const result = state.submitted ? resultFor(q, ans) : null;
         const cls = [
           i === state.i ? "current" : "",
           hasAnswer(ans) ? "answered" : "",
           state.flags[q.id] ? "flagged" : "",
-          result === true ? "ok" : "",
-          result === false ? "bad" : ""
+          partial ? "partial" : "",
+          !partial && result === true ? "ok" : "",
+          !partial && result === false ? "bad" : ""
         ].join(" ");
-        const status = !hasAnswer(ans) ? "未作答" : result === true ? "答对" : result === false ? "答错" : "已作答";
+        const status = !hasAnswer(ans) ? "未作答" : partial ? "部分对" : result === true ? "答对" : result === false ? "答错" : "已作答";
         return `<button type="button" class="${cls}" data-i="${i}" aria-label="第 ${i + 1} 题，${status}" ${i === state.i ? 'aria-current="true"' : ""}>${i + 1}</button>`;
       }).join("");
       $("progress").innerHTML = `<strong>${answeredCount()}</strong> / ${qs.length}`;
@@ -649,11 +686,12 @@
       let body = `<h2>${heading}</h2>`;
       body += renderFigure(q.figure);
       const hasReference = q.answer != null && q.answer !== "" && (!Array.isArray(q.answer) || q.answer.length > 0);
-      const result = hasAnswer(selected) ? grade(q, selected) : null;
-      const resultText = result === true ? "回答正确" : result === false ? "回答错误" : "";
-      const resultClass = result === true ? "good" : result === false ? "bad" : "";
-      const comparison = state.submitted && isObjective(kind) && hasReference
-        ? `<div class="comparison"><div><span class="comparison-label">你的答案</span><span class="comparison-answer">${escapeAttr(formatUserAnswer(selected))}</span><span class="comparison-result ${resultClass}">${resultText}</span></div><div><span class="comparison-label">参考答案</span><span class="comparison-answer">${escapeAttr(formatAnswer(q))}</span></div></div>`
+      const partial = state.submitted && isPartial(q);
+      const result = state.submitted ? resultFor(q, selected) : null;
+      const resultText = !state.submitted ? "" : partial ? "部分正确" : result === true ? "回答正确" : result === false ? "回答错误" : "";
+      const resultClass = partial ? "mid" : result === true ? "good" : result === false ? "bad" : "";
+      const comparison = state.submitted && ((isObjective(kind) && hasReference) || resultText)
+        ? `<div class="comparison"><div><span class="comparison-label">你的答案</span><span class="comparison-answer">${escapeAttr(formatUserAnswer(selected))}</span><span class="comparison-result ${resultClass}">${resultText}</span></div><div><span class="comparison-label">参考答案</span><span class="comparison-answer">${escapeAttr(hasReference ? formatAnswer(q) : (q.scoring ? "见评分要点" : "—"))}</span></div></div>`
         : "";
       if (kind === "fill" && splitFillStem(q.stem).blankCount > 0) {
         body += renderFill(q, selected);
@@ -719,11 +757,23 @@
     }
 
     function record() {
+      const reviewed = state.gradingSource === "review";
       const items = qs.map(q => {
         const userAnswer = state.answers[q.id];
         const kind = kindOf(q);
-        const correct = grade(q, userAnswer);
-        return {
+        let correct;
+        let partial = false;
+        if (reviewed || (state.submitted && state.grades[q.id] && Object.prototype.hasOwnProperty.call(state.grades[q.id], "correct"))) {
+          const g = state.grades[q.id] || {};
+          correct = Object.prototype.hasOwnProperty.call(g, "correct") ? g.correct : null;
+          partial = !!g.partial;
+        } else {
+          correct = grade(q, userAnswer);
+          if (state.submitted) {
+            state.grades[q.id] = { correct, partial: false };
+          }
+        }
+        const row = {
           id: q.id,
           topicId: q.topicId,
           wrongItemId: q.wrongItemId,
@@ -739,20 +789,12 @@
           correct,
           flagged: !!state.flags[q.id]
         };
+        if (partial) row.partial = true;
+        return row;
       });
-      const scored = items.filter(x => x.correct !== null);
-      const right = scored.filter(x => x.correct).length;
-      const by = (key) => {
-        const map = {};
-        scored.forEach(it => {
-          const k = it[key] || "未分类";
-          map[k] = map[k] || { total: 0, correct: 0 };
-          map[k].total += 1;
-          if (it.correct) map[k].correct += 1;
-        });
-        return map;
-      };
-      return {
+      if (state.submitted && !reviewed) state.gradingSource = "auto";
+      const summary = summarizeItems(items);
+      const out = {
         savedAt: new Date().toISOString(),
         startedAt: new Date(state.startedAt).toISOString(),
         submitted: !!state.submitted,
@@ -766,16 +808,10 @@
         allowReviewBeforeSubmit: !!session.allowReviewBeforeSubmit,
         usedSeconds: state.usedSeconds,
         items,
-        summary: {
-          total: qs.length,
-          scored: scored.length,
-          correct: right,
-          unanswered: items.filter(x => !hasAnswer(x.userAnswer)).length,
-          accuracy: scored.length ? Math.round(right / scored.length * 1000) / 1000 : null,
-          byTopic: by("topic"),
-          byKind: by("kind")
-        }
+        summary
       };
+      if (state.submitted) out.gradingSource = reviewed ? "review" : "auto";
+      return out;
     }
 
     function renderReport() {
@@ -871,12 +907,21 @@
         if (!Number.isNaN(t)) state.startedAt = t;
       }
       if (typeof rec.usedSeconds === "number") state.usedSeconds = rec.usedSeconds;
+      if (rec.gradingSource === "review" || rec.gradingSource === "auto") {
+        state.gradingSource = rec.gradingSource;
+      }
       const items = Array.isArray(rec.items) ? rec.items : [];
       if (items.length) {
         items.forEach(it => {
           if (!it || !it.id) return;
           if (hasAnswer(it.userAnswer)) state.answers[it.id] = it.userAnswer;
           if (it.flagged) state.flags[it.id] = true;
+          if (Object.prototype.hasOwnProperty.call(it, "correct") || it.partial) {
+            state.grades[it.id] = {
+              correct: Object.prototype.hasOwnProperty.call(it, "correct") ? it.correct : null,
+              partial: !!it.partial
+            };
+          }
         });
       } else {
         if (rec.answers && typeof rec.answers === "object") Object.assign(state.answers, rec.answers);
@@ -885,6 +930,7 @@
       if (recordIsSubmitted(rec)) {
         state.submitted = true;
         state.ticking = false;
+        if (!state.gradingSource) state.gradingSource = "auto";
       }
     }
     function pickRestore(server, local) {

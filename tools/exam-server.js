@@ -10,7 +10,7 @@ const { execSync } = require("child_process");
 
 const DEFAULT_PORT = 17922;
 const SERVICE_NAME = "exam-assistant";
-const SERVICE_VERSION = "1.4.3";
+const SERVICE_VERSION = "1.4.4";
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".exam-assistant");
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -907,6 +907,16 @@ function createHandler(root, port, controls) {
           if (pathname === "/api/sessions") {
             const record = applyStartedAt(root, validateRecord(payload));
             const filePath = resolveSessionWritePath(root, record);
+            const existing = loadJson(filePath, null);
+            if (
+              existing &&
+              isSubmitted(existing) &&
+              existing.gradingSource === "review" &&
+              isSubmitted(record) &&
+              (record.gradingSource === "auto" || !record.gradingSource)
+            ) {
+              throw new Error("该场已复核，不能用自动判分覆盖");
+            }
             writeJson(filePath, record);
             sendJson(res, 200, {
               ok: true,
@@ -915,6 +925,7 @@ function createHandler(root, port, controls) {
               submitted: isSubmitted(record),
               startedAt: record.startedAt || "",
               summary: record.summary || {},
+              gradingSource: record.gradingSource || "",
             });
             return;
           }

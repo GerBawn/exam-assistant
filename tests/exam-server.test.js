@@ -423,7 +423,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.4.3");
+  assert.strictEqual(SERVICE_VERSION, "1.4.4");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -438,6 +438,9 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(!/html\.embedded\s+\.app\s*\{[^}]*max-width:\s*none/i.test(practice), "embedded .app must keep content-max, not max-width:none");
   assert.ok(/html\.embedded\s+\.app\s*\{[^}]*max-width:\s*var\(--content-max\)/i.test(practice), "embedded .app should use --content-max");
   assert.ok(practice.includes('`第 ${state.i + 1} 题${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`') || practice.includes("第 ${state.i + 1} 题"), "practice heading should keep question number");
+  assert.ok(practice.includes("function resultFor"), "practice should prefer saved official grades when reviewing");
+  assert.ok(practice.includes('gradingSource'), "practice should persist gradingSource");
+  assert.ok(practice.includes('state.grades'), "practice should keep official item grades in memory");
   assert.ok(practice.includes("left <= 0"));
   const home = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
   assert.ok(/function openExam\([\s\S]*?panel-papers[\s\S]*?showTab\("papers"/.test(home), "openExam must open inside papers panel and keep papers tab");
@@ -927,6 +930,78 @@ async function testChoiceReviewDistinguishesSelections() {
   assert.doesNotMatch(blank, /漏选|错选|选对/);
 }
 
+
+async function testOfficialSessionGrades() {
+  const root = tmpDir();
+  ensureDirs(root);
+  const { server, port } = await startTestServer(root, 0);
+  try {
+    const paper = {
+      schemaVersion: 1,
+      sessionId: "grade-unify-1",
+      title: "成绩统一卷",
+      mode: "new",
+      durationMinutes: 0,
+      materials: [],
+      questions: [
+        { id: "q1", kind: "fill", stem: "买方支付的成本叫什么？", answer: "期权费", analysis: "" },
+        { id: "q2", kind: "choice", stem: "示例", options: ["A. 一", "B. 二"], answer: "A" },
+      ],
+    };
+    const created = await request(port, "POST", "/api/assignments", paper);
+    assert.strictEqual(created.status, 200);
+
+    const auto = {
+      sessionId: "grade-unify-1",
+      title: "成绩统一卷",
+      submitted: true,
+      gradingSource: "auto",
+      startedAt: "2026-11-26T01:00:00Z",
+      savedAt: "2026-11-26T01:05:00Z",
+      items: [
+        { id: "q1", kind: "fill", userAnswer: "权利金", correctAnswer: "期权费", correct: false, topic: "期权费（权利金）" },
+        { id: "q2", kind: "choice", userAnswer: "A", correctAnswer: "A", correct: true },
+      ],
+      summary: { total: 2, scored: 2, correct: 1, unanswered: 0, accuracy: 0.5 },
+    };
+    const first = await request(port, "POST", "/api/sessions", auto);
+    assert.strictEqual(first.status, 200);
+    let home = await request(port, "GET", "/api/home");
+    const row = (home.data.home.papers || []).find((p) => p.sessionId === "grade-unify-1");
+    assert.ok(row);
+    assert.strictEqual(row.accuracy, 0.5);
+    assert.strictEqual(row.correct, 1);
+
+    const reviewed = {
+      ...auto,
+      gradingSource: "review",
+      savedAt: "2026-11-26T01:10:00Z",
+      items: [
+        { id: "q1", kind: "fill", userAnswer: "权利金", correctAnswer: "期权费", correct: true, topic: "期权费（权利金）" },
+        { id: "q2", kind: "choice", userAnswer: "A", correctAnswer: "A", correct: true },
+      ],
+      summary: { total: 2, scored: 2, correct: 2, unanswered: 0, accuracy: 1 },
+    };
+    const second = await request(port, "POST", "/api/sessions", reviewed);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(second.data.gradingSource, "review");
+    home = await request(port, "GET", "/api/home");
+    const row2 = (home.data.home.papers || []).find((p) => p.sessionId === "grade-unify-1");
+    assert.strictEqual(row2.accuracy, 1);
+    assert.strictEqual(row2.correct, 2);
+
+    const revert = { ...auto, savedAt: "2026-11-26T01:11:00Z" };
+    const blocked = await request(port, "POST", "/api/sessions", revert);
+    assert.strictEqual(blocked.status, 400);
+    const kept = await request(port, "GET", "/api/sessions/grade-unify-1");
+    assert.strictEqual(kept.data.session.gradingSource, "review");
+    assert.strictEqual(kept.data.session.summary.accuracy, 1);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
@@ -947,6 +1022,7 @@ async function main() {
     ["/api/map with sample archive", testMapWithSampleArchive],
     ["/api/map clusters", testMapClusters],
     ["wrong items match by stable ID or unique legacy name", testWrongItemTopicIds],
+    ["official session grades write back and protect review", testOfficialSessionGrades],
   ];
   let failed = 0;
   for (const [name, fn] of tests) {

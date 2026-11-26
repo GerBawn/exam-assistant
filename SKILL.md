@@ -38,7 +38,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 已有同一地址的材料，或对话粘贴且标题已对应同一份材料时，复用该 `id`，需要时补全标题或地址。只把这些定位信息写入档案，材料全文仍留在原地址或原对话里。尚无 `sources` 时先写成空列表，随收录再追加。
 
-每轮先读档案；目录或文件尚不存在时再初始化。出题时保存试卷 JSON，由服务渲染练习页。本机服务把作答写入 `sessions/`；交卷后由助手按「收回作答并更新档案」更新 `state.json` 与 `wrong-items.json`。
+每轮先读档案；目录或文件尚不存在时再初始化。出题时保存试卷 JSON，由服务渲染练习页。本机服务把作答写入 `sessions/`。官方成绩以该场 session 为准：交卷时练习页先写入字面自动判，助手复核后把对错与汇总写回同一份 session，再按这份更新 `state.json` 与 `wrong-items.json`。
 
 每个知识点至少含 `id`、`topic`、`sourceId`、`source`、`excerpt`、`mastery`（new / learning / weak / mastered）、`correct`、`wrong`、`streak`、`last_seen`。有科目时写入 `subject`，学习地图按科目分组展示；没有科目时，地图归入「未分科目」。可用可选字段 `clusterId` 指向所属知识类。`source` 写章节或小节这类便于阅读的来源标注，`excerpt` 保留短摘录；`sourceId` 指向 `sources` 里对应材料。用户问这些知识来自哪里时，用该材料的地址和这条 `source` 标注来说明。
 
@@ -81,7 +81,7 @@ description: 在用户提供学习材料或点名一个主题出题、按新知�
 
 用户要继续一份已收录材料、但档案里还没有该部分的知识点时，若地址仍可打开，就据此补提取再出题；地址为空或打不开，请用户再提供该材料。
 
-写题一律按「如何出题」。按「如何布置试卷」启动本机服务并保存试卷，`mode` 用该方式约定的取值；用户说做完后，按「收回作答并更新档案」批改并更新档案。总结报告和纯讲解使用文字。
+写题一律按「如何出题」。按「如何布置试卷」启动本机服务并保存试卷，`mode` 用该方式约定的取值；用户说做完后，按「收回作答并更新档案」复核成绩、写回该场 session，再更新档案。总结报告和纯讲解使用文字。
 
 ## 新知练习
 
@@ -249,7 +249,7 @@ node -e '
   - `essay`：简答、案例分析、计算题的作答框。`answer` 可空，必须写 `scoring`（评分要点），必要时再写 `analysis`。
 - 题目可用可选字段 `figure` 配图：`caption` 为图注；图本身用 `html` 或 `svg` 写内联标记，或用 `src` 提供 data URI，需要时再写 `alt`。这样练习页自身就完整了。
 - 共用材料放进 `materials`，题目用 `materialId` 引用。材料里的图同样写入 `html`，使用内联 SVG、HTML 或 data URI。
-- 客观题交卷后由页面自动判对错；主观题 `correct` 为 `null`，交卷后展示评分要点，由助手批改。
+- 客观题交卷后由页面按标准答案字面自动判对错，并写入该场 session（`gradingSource: "auto"`）；主观题 `correct` 先为 `null`，交卷后展示评分要点，由助手批改后写回同一份 session。
 - 每题写完整的解析；主观题必须写 `scoring`。
 
 ### 页面交互
@@ -272,9 +272,10 @@ node -e '
 3. 若该文件还在下载目录，把它放到 `sessions/`。
    需要还原题目、选项、材料或参考答案时，用 `sessionId` 读取 `GET /api/assignments/{sessionId}` 或对应的布置 JSON，再按 `items[].id` 与 `questions[].id` 关联。历史卷缺少题目 JSON 时，使用已保存作答里的题目快照。定期复习按 `topicId` 查相关知识点的掌握度和到期时间。
 4. 先重新读取最新的 `state.json` 和 `wrong-items.json`。若 `state.json` 的 `sessions` 里已经有这个 `sessionId`，根据已有记录给出反馈，保持现有计数和错题列表。
-5. 若尚未回写：追加本场摘要；按知识点累加 `correct` / `wrong` / `streak`，并按「学习档案」里的掌握度规则更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错或部分对的题；「部分对」计入 `wrong`，不计入 `correct`。客观题以记录里的 `correct` 为起点，必要时复核；主观题依据 `scoring` 评分后再写入对、错或部分对，意思对即可。本场涉及的点如对得上已有类，或原先散着的点已经能看出结构，按「知识归类」补类或微调。
-6. 更新 `wrong-items.json`。首次答错或部分对的题建一条 `pending` 记录，保存稳定 `id`、`sessionId`、`questionId`、`topicId`、`topic`、题干、实际作答和评分依据。复盘题按 `wrongItemId` 更新原条目，全对则改为 `已掌握`，答错或部分对仍为 `pending`，保留错误作答供下次出题；空白跳过。只改这道原错题。对旧卷，知识点名称与来源能唯一对应时可补认 `topicId`；复盘题缺少 `wrongItemId` 时，只有试卷来源或原题记录能唯一确认对应错题，才更新其状态。同名或仅同一考点不足以确认关联。
-7. 用几句话反馈本场正确率、薄弱点和下一轮建议。下一轮建议只根据掌握度和到期间隔，指出该隔开再练或该先补的点；有知识类时，也可指出该先补哪一类。
+5. 若尚未回写：先复核本场成绩，并把逐题结果与汇总写回同一份 session（`POST /api/sessions` 或直接写 `sessions/exam-session-*.json`），设置 `gradingSource: "review"`。客观题以记录里的 `correct` 为起点，必要时按意思改判；主观题依据 `scoring` 评完后写入对、错或部分对，意思对即可；部分对时该题 `partial: true` 且 `correct: false`。汇总 `summary`（含 `accuracy`、`correct`、`scored`）与逐题结果一致。
+6. 再按这份已写回的 session 追加本场摘要到 `state.json` 的 `sessions`（`accuracy` 抄自 `summary.accuracy`）；按知识点累加 `correct` / `wrong` / `streak`，并按「学习档案」里的掌握度规则更新 `mastery` 与 `last_seen`。错误次数只计入已作答且答错或部分对的题；「部分对」计入 `wrong`，不计入 `correct`。本场涉及的点如对得上已有类，或原先散着的点已经能看出结构，按「知识归类」补类或微调。
+7. 更新 `wrong-items.json`。首次答错或部分对的题建一条 `pending` 记录，保存稳定 `id`、`sessionId`、`questionId`、`topicId`、`topic`、题干、实际作答和评分依据。复盘题按 `wrongItemId` 更新原条目，全对则改为 `已掌握`，答错或部分对仍为 `pending`，保留错误作答供下次出题；空白跳过。只改这道原错题。对旧卷，知识点名称与来源能唯一对应时可补认 `topicId`；复盘题缺少 `wrongItemId` 时，只有试卷来源或原题记录能唯一确认对应错题，才更新其状态。同名或仅同一考点不足以确认关联。
+8. 用几句话反馈本场正确率、薄弱点和下一轮建议。下一轮建议只根据掌握度和到期间隔，指出该隔开再练或该先补的点；有知识类时，也可指出该先补哪一类。
 
 `state.json` 与 `wrong-items.json` 由助手在读完已交卷记录后更新，写入方式见「档案格式」。档案更新后，刷新本机首页的学习地图即可看到最新掌握情况和到期知识点。
 
