@@ -423,7 +423,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.4.1");
+  assert.strictEqual(SERVICE_VERSION, "1.4.3");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -435,9 +435,14 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(!practice.includes("公考"));
   assert.ok(practice.includes("submit()"));
   assert.ok(!practice.includes('q.topic ? " · " + q.topic'), "practice heading must not render topic during answering");
+  assert.ok(!/html\.embedded\s+\.app\s*\{[^}]*max-width:\s*none/i.test(practice), "embedded .app must keep content-max, not max-width:none");
+  assert.ok(/html\.embedded\s+\.app\s*\{[^}]*max-width:\s*var\(--content-max\)/i.test(practice), "embedded .app should use --content-max");
   assert.ok(practice.includes('`第 ${state.i + 1} 题${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`') || practice.includes("第 ${state.i + 1} 题"), "practice heading should keep question number");
   assert.ok(practice.includes("left <= 0"));
   const home = fs.readFileSync(path.resolve(__dirname, "..", "templates", "home.html"), "utf8");
+  assert.ok(/function openExam\([\s\S]*?panel-papers[\s\S]*?showTab\("papers"/.test(home), "openExam must open inside papers panel and keep papers tab");
+  assert.ok(!/function openExam\([\s\S]*?showTab\("latest"/.test(home), "openExam must not showTab latest");
+  assert.ok(!/function openExam\([\s\S]*?panel-latest/.test(home), "openExam must not rewrite panel-latest");
   const chrome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "app-chrome.inc.html"), "utf8");
   assert.ok(home.includes("{{APP_CHROME}}"));
   assert.ok(practice.includes("{{APP_CHROME}}"));
