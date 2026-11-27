@@ -461,36 +461,84 @@
       if (last < String(stem || "").length) parts.push({ type: "text", value: (stem || "").slice(last) });
       return { parts, blankCount: i };
     }
+    function answerKey(q) {
+      if (q && q.answer != null && q.answer !== "") return q.answer;
+      if (q && q.correctAnswer != null && q.correctAnswer !== "") return q.correctAnswer;
+      return null;
+    }
+    function fillSlots(q) {
+      const raw = answerKey(q);
+      const blanks = splitFillStem(q.stem).blankCount;
+      if (raw == null || raw === "") return [];
+      const asAliases = (value) => Array.isArray(value)
+        ? value.map(v => String(v == null ? "" : v))
+        : [String(value == null ? "" : value)];
+      if (Array.isArray(raw)) {
+        if (raw.some(v => Array.isArray(v))) return raw.map(asAliases);
+        if (blanks > 1 && raw.length === blanks) return raw.map(asAliases);
+        return [asAliases(raw)];
+      }
+      return [asAliases(raw)];
+    }
+    function normalizeFill(value) {
+      let text = String(value == null ? "" : value);
+      try { text = text.normalize("NFKC"); } catch (err) {}
+      text = text.replace(/兩/g, "两").replace(/個/g, "个").replace(/\u3000/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+      text = text.replace(/[。．.、，,；;]+$/g, "");
+      return text;
+    }
+    function fillValuesEqual(left, right) {
+      if (left === right) return true;
+      const stripPct = (value) => value.endsWith("%") ? value.slice(0, -1).trim() : value;
+      const a = stripPct(left);
+      const b = stripPct(right);
+      if (a === b && a) return true;
+      if (a !== "" && b !== "" && Number.isFinite(Number(a)) && Number.isFinite(Number(b))) {
+        return Number(a) === Number(b);
+      }
+      return false;
+    }
+    function fillMatches(aliases, userValue) {
+      const got = normalizeFill(userValue);
+      if (!got) return false;
+      return (aliases || []).some(v => fillValuesEqual(normalizeFill(v), got));
+    }
     function expectedFill(q) {
-      if (Array.isArray(q.answer)) return q.answer.map(v => String(v == null ? "" : v));
-      if (q.answer == null) return [];
-      return [String(q.answer)];
+      return fillSlots(q).map(aliases => aliases.map(v => String(v).trim()).filter(Boolean).join("、"));
+    }
+    function fillSlotCount(q) {
+      const blanks = splitFillStem(q.stem).blankCount;
+      if (blanks > 0) return blanks;
+      const slots = fillSlots(q);
+      return Math.max(1, slots.length);
     }
     function grade(q, userAnswer) {
       const kind = kindOf(q);
-      if (!isObjective(kind) || q.answer == null || q.answer === "") return null;
+      const key = answerKey(q);
+      if (!isObjective(kind) || key == null || key === "") return null;
       if (kind === "choice") {
-        return String(userAnswer || "").trim().toUpperCase() === String(q.answer).trim().toUpperCase();
+        return String(userAnswer || "").trim().toUpperCase() === String(key).trim().toUpperCase();
       }
       if (kind === "multi") {
         const a = splitLetters(userAnswer).sort().join(",");
-        const b = splitLetters(q.answer).sort().join(",");
+        const b = splitLetters(key).sort().join(",");
         return a === b && a.length > 0;
       }
       if (kind === "order") {
-        return splitLetters(userAnswer).join(",") === splitLetters(q.answer).join(",");
+        return splitLetters(userAnswer).join(",") === splitLetters(key).join(",");
       }
       if (kind === "fill") {
-        const expected = expectedFill(q);
-        const blanks = splitFillStem(q.stem).blankCount;
-        const user = asFillList(userAnswer);
-        if (blanks <= 1 && expected.length > 1 && user.length <= 1) {
-          const got = String(user[0] || "").trim().toLowerCase();
-          return expected.some(v => String(v).trim().toLowerCase() === got);
+        const slots = fillSlots(q);
+        const slotCount = fillSlotCount(q);
+        let user = asFillList(userAnswer);
+        if (!slots.length) return null;
+        if (slotCount <= 1) {
+          const filled = user.find(v => String(v || "").trim());
+          user = [filled != null ? String(filled) : String(user[0] || "")];
+          return fillMatches(slots[0] || [], user[0]);
         }
-        if (!expected.length) return null;
-        if (user.length !== expected.length) return false;
-        return expected.every((v, i) => String(v).trim().toLowerCase() === String(user[i] || "").trim().toLowerCase());
+        if (user.length !== slotCount) return false;
+        return Array.from({ length: slotCount }, (_, i) => fillMatches(slots[i] || [], user[i])).every(Boolean);
       }
       return null;
     }
@@ -641,7 +689,7 @@
         }).join("");
         return `<p class="q-stem">${html}</p>`;
       }
-      const n = Math.max(expectedFill(q).length, 1);
+      const n = fillSlotCount(q);
       if (n === 1) {
         return `<p class="q-stem">${q.stem || ""}</p><input class="fill-box" data-blank="0" ${state.submitted ? "disabled" : ""} value="${escapeAttr(values[0] || "")}" placeholder="在这里填写" />`;
       }
@@ -685,7 +733,8 @@
       const heading = `第 ${state.i + 1} 题${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`;
       let body = `<h2>${heading}</h2>`;
       body += renderFigure(q.figure);
-      const hasReference = q.answer != null && q.answer !== "" && (!Array.isArray(q.answer) || q.answer.length > 0);
+      const key = answerKey(q);
+      const hasReference = key != null && key !== "" && (!Array.isArray(key) || key.length > 0);
       const partial = state.submitted && isPartial(q);
       const result = state.submitted ? resultFor(q, selected) : null;
       const resultText = !state.submitted ? "" : partial ? "部分正确" : result === true ? "回答正确" : result === false ? "回答错误" : "";
@@ -1037,7 +1086,7 @@
 
     function setFillAnswer(q, index, value) {
       const parsed = splitFillStem(q.stem);
-      const n = parsed.blankCount || Math.max(expectedFill(q).length, 1);
+      const n = fillSlotCount(q);
       const list = asFillList(state.answers[q.id]);
       while (list.length < n) list.push("");
       list[index] = value;

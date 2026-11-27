@@ -423,7 +423,7 @@ async function testReuseRunningServer() {
 async function testConstantsAndTemplateKinds() {
   assert.strictEqual(DEFAULT_PORT, 17922);
   assert.strictEqual(SERVICE_NAME, "exam-assistant");
-  assert.strictEqual(SERVICE_VERSION, "1.4.4");
+  assert.strictEqual(SERVICE_VERSION, "1.4.5");
   assert.strictEqual(DEFAULT_DATA_DIR, path.join(os.homedir(), ".exam-assistant"));
   const practice = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
   for (const kind of ["choice", "multi", "order", "fill", "essay"]) {
@@ -439,6 +439,8 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(/html\.embedded\s+\.app\s*\{[^}]*max-width:\s*var\(--content-max\)/i.test(practice), "embedded .app should use --content-max");
   assert.ok(practice.includes('`第 ${state.i + 1} 题${kindLabel(kind) ? " · " + kindLabel(kind) : ""}`') || practice.includes("第 ${state.i + 1} 题"), "practice heading should keep question number");
   assert.ok(practice.includes("function resultFor"), "practice should prefer saved official grades when reviewing");
+  assert.ok(practice.includes("function fillSlots"), "practice should normalize fill answers into per-blank aliases");
+  assert.ok(practice.includes("function fillMatches"), "practice should match any accepted fill alias");
   assert.ok(practice.includes('gradingSource'), "practice should persist gradingSource");
   assert.ok(practice.includes('state.grades'), "practice should keep official item grades in memory");
   assert.ok(practice.includes("left <= 0"));
@@ -446,6 +448,11 @@ async function testConstantsAndTemplateKinds() {
   assert.ok(/function openExam\([\s\S]*?panel-papers[\s\S]*?showTab\("papers"/.test(home), "openExam must open inside papers panel and keep papers tab");
   assert.ok(!/function openExam\([\s\S]*?showTab\("latest"/.test(home), "openExam must not showTab latest");
   assert.ok(!/function openExam\([\s\S]*?panel-latest/.test(home), "openExam must not rewrite panel-latest");
+
+  assert.ok(home.includes("科目掌握") && home.includes("科目一览"), "map should keep subject overview");
+  assert.ok(!/named\.length > 8\) return ""/.test(home), "subject overview must not disappear when there are more than 8 subjects");
+  assert.ok(home.includes("<details") && home.includes("topic-group"), "subject topic lists should be collapsible");
+  assert.ok(home.includes("bindMapGroups"), "map should remember which subject groups are expanded");
   const chrome = fs.readFileSync(path.resolve(__dirname, "..", "templates", "app-chrome.inc.html"), "utf8");
   assert.ok(home.includes("{{APP_CHROME}}"));
   assert.ok(practice.includes("{{APP_CHROME}}"));
@@ -1002,6 +1009,96 @@ async function testOfficialSessionGrades() {
   }
 }
 
+
+function loadPracticeGradeFns() {
+  const html = fs.readFileSync(path.resolve(__dirname, "..", "templates", "practice.html"), "utf8");
+  const start = html.indexOf("function asFillList");
+  const end = html.indexOf("function answeredCount");
+  if (start < 0 || end <= start) throw new Error("cannot extract fill graders from practice.html");
+  const prelude = `
+    function kindOf(q) { return (q && q.kind) || "essay"; }
+    function isObjective(kind) {
+      return kind === "choice" || kind === "multi" || kind === "order" || kind === "fill";
+    }
+    function splitLetters(value) {
+      if (Array.isArray(value)) return value.map(v => String(v || "").trim().toUpperCase()).filter(Boolean);
+      return String(value || "").split(/[,，、\\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    }
+  `;
+  const exports = {};
+  const body = prelude + html.slice(start, end) + `
+    exports.grade = grade;
+    exports.fillSlots = fillSlots;
+    exports.fillMatches = fillMatches;
+    exports.expectedFill = expectedFill;
+    exports.fillSlotCount = fillSlotCount;
+    exports.answerKey = answerKey;
+  `;
+  Function("exports", body)(exports);
+  return exports;
+}
+
+function testFillAliasGrading() {
+  const { grade, expectedFill, fillSlotCount } = loadPracticeGradeFns();
+  const q = {
+    id: "q3",
+    kind: "fill",
+    stem: "美联储的双重使命是促进充分____和稳定物价（通胀目标通常为____%）；它调节的联邦基金利率，是银行之间____拆借准备金的利率。",
+    answer: [
+      ["就业", "就业水平", "就业率", "employment", "full employment"],
+      ["2", "2%", "百分之二", "2.0", "2.0%", "兩個", "二"],
+      ["隔夜", "隔夜的", "overnight", "隔夜拆借", "隔夜同业"],
+    ],
+  };
+  assert.strictEqual(fillSlotCount(q), 3);
+  assert.strictEqual(grade(q, ["就业", "2", "隔夜"]), true);
+  assert.strictEqual(grade(q, ["full employment", "2%", "overnight"]), true);
+  assert.strictEqual(grade(q, [" 就业 ", "2.0", "隔夜的"]), true);
+  assert.strictEqual(grade(q, ["就业", "3", "隔夜"]), false);
+  assert.strictEqual(grade(q, ["就业", "2"]), false);
+
+  const one = { kind: "fill", stem: "买方支付的成本叫什么？", answer: ["期权费", "权利金"] };
+  assert.strictEqual(fillSlotCount(one), 1);
+  assert.strictEqual(grade(one, "权利金"), true);
+  assert.strictEqual(grade(one, "手续费"), false);
+
+  const flat = { kind: "fill", stem: "甲____乙____丙____", answer: ["甲", "乙", "丙"] };
+  assert.strictEqual(grade(flat, ["甲", "乙", "丙"]), true);
+  assert.strictEqual(grade(flat, ["甲", "乙", "丁"]), false);
+
+  const fromSession = { kind: "fill", stem: q.stem, correctAnswer: q.answer };
+  assert.strictEqual(grade(fromSession, ["就业", "2", "隔夜"]), true);
+
+  const q20 = {
+    kind: "fill",
+    stem: "负债分为____和____。",
+    answer: [["流动", "短期", "流动的"], ["非流动", "长期", "非流动的"]],
+  };
+  assert.strictEqual(grade(q20, ["短期", "长期"]), true);
+
+  const shown = expectedFill(q).join(" / ");
+  assert.match(shown, /就业、就业水平/);
+
+  assert.strictEqual(grade(q, ["就业", "2%", "隔夜"]), true);
+  assert.strictEqual(grade(q, ["就业", "2.0", "隔夜"]), true);
+  assert.strictEqual(grade(q, ["就业", "兩個", "隔夜"]), true);
+
+  const qPct = {
+    kind: "fill",
+    stem: "通胀目标通常为____。",
+    answer: ["2", "2%", "百分之二"],
+  };
+  assert.strictEqual(grade(qPct, "2%"), true);
+  assert.strictEqual(grade(qPct, "2.0%"), true);
+
+  const qTw = {
+    kind: "fill",
+    stem: "一共有____个。",
+    answer: ["两个"],
+  };
+  assert.strictEqual(grade(qTw, "兩個"), true);
+}
+
 async function main() {
   const tests = [
     ["constants and templates", testConstantsAndTemplateKinds],
@@ -1023,6 +1120,7 @@ async function main() {
     ["/api/map clusters", testMapClusters],
     ["wrong items match by stable ID or unique legacy name", testWrongItemTopicIds],
     ["official session grades write back and protect review", testOfficialSessionGrades],
+    ["fill blanks match any accepted alias", testFillAliasGrading],
   ];
   let failed = 0;
   for (const [name, fn] of tests) {
